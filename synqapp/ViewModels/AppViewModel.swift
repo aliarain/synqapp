@@ -43,6 +43,9 @@ final class AppViewModel: ObservableObject {
     // MARK: Sidebar
     @Published var sidebarVisible: Bool = false
 
+    // MARK: Settings
+    @Published var showSettings: Bool = false
+
     // MARK: Toast / error
     @Published var toast: ToastMessage? = nil
 
@@ -52,6 +55,7 @@ final class AppViewModel: ObservableObject {
 
     // MARK: Autosave
     private var autosaveTask: DispatchWorkItem?
+    private var prefsCancellable: AnyCancellable?
 
     // MARK: Placeholders
     static let placeholders = [
@@ -69,6 +73,10 @@ final class AppViewModel: ObservableObject {
     // MARK: - Init
 
     init() {
+        // Forward prefs changes through AppViewModel so SwiftUI re-renders on theme/mode changes
+        prefsCancellable = prefs.objectWillChange.sink { [weak self] in
+            self?.objectWillChange.send()
+        }
         loadEntries()
     }
 

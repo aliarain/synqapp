@@ -15,12 +15,12 @@ struct BottomBarView: View {
     @Binding var isDictating: Bool
 
     var onStartVideo: () -> Void
+    var onPrompt: (String) -> Void   // called with prompt text
 
     let colorScheme: ColorScheme
 
     @State private var randomFontName: String? = nil
 
-    // Exact same color as the editor background — no visible seam
     private var editorBg: Color {
         colorScheme == .dark
             ? Color(red: 0.08, green: 0.08, blue: 0.08)
@@ -32,7 +32,10 @@ struct BottomBarView: View {
             FontButtonsSection(
                 prefs: prefs,
                 colorScheme: colorScheme,
-                randomFontName: $randomFontName
+                randomFontName: $randomFontName,
+                editorText: vm.editorText,
+                entries: vm.entries,
+                onPrompt: onPrompt
             )
             Spacer()
             UtilityButtonsSection(
@@ -49,8 +52,6 @@ struct BottomBarView: View {
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
         .background(
-            // Fades from transparent at top to solid editor color at bottom
-            // so the bar dissolves into the page — no visible border or contrast
             LinearGradient(
                 colors: [editorBg.opacity(0), editorBg],
                 startPoint: .top,
@@ -66,13 +67,19 @@ struct FontButtonsSection: View {
     @ObservedObject var prefs: PreferencesService
     let colorScheme: ColorScheme
     @Binding var randomFontName: String?
+    let editorText: String
+    let entries: [JournalEntry]
+    var onPrompt: (String) -> Void
 
     private var labelColor: Color {
         colorScheme == .dark ? Color.gray.opacity(0.8) : Color.gray
     }
 
+    private var stats: StatsService { StatsService.shared }
+
     var body: some View {
         HStack(spacing: 8) {
+            // Font size
             BarButton(label: "\(Int(prefs.fontSize))px", color: labelColor) {
                 prefs.cycleFontSize()
             }
@@ -95,12 +102,90 @@ struct FontButtonsSection: View {
                     randomFontName = pick
                 }
             }
+
+            // ── Stats cluster ────────────────────────────────────────
+            if prefs.showWordCount {
+                dot(labelColor)
+                Text(stats.wordCountLabel(editorText))
+                    .font(.system(size: 12))
+                    .foregroundColor(labelColor)
+            }
+
+            if prefs.showReadingTime {
+                let rt = stats.readingTimeLabel(editorText)
+                if !rt.isEmpty {
+                    dot(labelColor)
+                    Text(rt)
+                        .font(.system(size: 12))
+                        .foregroundColor(labelColor)
+                }
+            }
+
+            if prefs.showStreak {
+                let streak = stats.currentStreak(entries: entries)
+                if streak > 0 {
+                    dot(labelColor)
+                    Text(stats.streakLabel(streak))
+                        .font(.system(size: 12))
+                        .foregroundColor(labelColor)
+                }
+            }
+
+            if prefs.hasDailyGoal {
+                dot(labelColor)
+                DailyGoalIndicator(
+                    entries: entries,
+                    goal: prefs.dailyWordGoal,
+                    colorScheme: colorScheme
+                )
+            }
+
+            // Writing prompt button
+            dot(labelColor)
+            BarIconButton(icon: "sparkles", color: labelColor, help: "Writing prompt") {
+                onPrompt(WritingPromptsService.shared.randomPrompt())
+            }
         }
     }
 
     @ViewBuilder
     private func dot(_ color: Color) -> some View {
         Text("•").font(.system(size: 10)).foregroundColor(color)
+    }
+}
+
+// MARK: - Daily goal indicator
+
+struct DailyGoalIndicator: View {
+    let entries: [JournalEntry]
+    let goal: Int
+    let colorScheme: ColorScheme
+
+    private var stats: StatsService { StatsService.shared }
+
+    var body: some View {
+        let progress = stats.goalProgress(entries: entries, goal: goal)
+        let label = stats.goalLabel(entries: entries, goal: goal)
+        let done = progress >= 1.0
+
+        HStack(spacing: 5) {
+            // Mini progress bar
+            GeometryReader { geo in
+                ZStack(alignment: .leading) {
+                    RoundedRectangle(cornerRadius: 2)
+                        .fill(Color.secondary.opacity(0.2))
+                    RoundedRectangle(cornerRadius: 2)
+                        .fill(done ? Color.green : Color.accentColor)
+                        .frame(width: geo.size.width * CGFloat(progress))
+                }
+            }
+            .frame(width: 36, height: 4)
+
+            Text(label)
+                .font(.system(size: 11))
+                .foregroundColor(done ? .green : .secondary)
+        }
+        .help("Daily goal: \(goal) words")
     }
 }
 
@@ -119,7 +204,7 @@ struct UtilityButtonsSection: View {
 
     let colorScheme: ColorScheme
 
-    @State private var showingChatMenu = false
+    @State private var showingModePicker = false
 
     private var labelColor: Color {
         colorScheme == .dark ? Color.gray.opacity(0.8) : Color.gray
@@ -127,10 +212,6 @@ struct UtilityButtonsSection: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            // Reflect
-            BarButton(label: "Reflect", color: labelColor) { vm.startReflection() }
-
-            dot(labelColor)
 
             // Timer
             TimerButtonView(
@@ -141,24 +222,31 @@ struct UtilityButtonsSection: View {
 
             dot(labelColor)
 
-            // Video
-            BarIconButton(icon: "video.fill", color: labelColor, help: "Record video entry") {
-                onStartVideo()
+            // Writing mode
+            BarButton(label: prefs.writingMode.label, color: labelColor) {
+                showingModePicker = true
+            }
+            .popover(
+                isPresented: $showingModePicker,
+                attachmentAnchor: .point(UnitPoint(x: 0.5, y: 0)),
+                arrowEdge: .top
+            ) {
+                WritingModePicker(
+                    mode: Binding(
+                        get: { prefs.writingMode },
+                        set: { prefs.writingMode = $0 }
+                    ),
+                    colorScheme: colorScheme,
+                    isPresented: $showingModePicker
+                )
             }
 
             dot(labelColor)
 
-            // Chat
-            BarButton(label: "Chat", color: labelColor) { showingChatMenu = true }
-                .popover(isPresented: $showingChatMenu,
-                         attachmentAnchor: .point(UnitPoint(x: 0.5, y: 0)),
-                         arrowEdge: .top) {
-                    ChatMenuView(
-                        sourceText: vm.chatSourceText,
-                        colorScheme: colorScheme,
-                        isPresented: $showingChatMenu
-                    )
-                }
+            // Video
+            BarIconButton(icon: "video.fill", color: labelColor, help: "Record video entry") {
+                onStartVideo()
+            }
 
             dot(labelColor)
 
@@ -171,9 +259,11 @@ struct UtilityButtonsSection: View {
 
             // Theme
             BarIconButton(
-                icon: colorScheme == .dark ? "sun.max" : "moon",
-                color: labelColor,
-                help: "Toggle theme"
+                icon: prefs.isDark ? "sun.max.fill" : "moon.fill",
+                color: prefs.isDark
+                    ? Color(red: 1.0, green: 0.871, blue: 0.408)
+                    : Color(red: 0.35, green: 0.35, blue: 0.55),
+                help: prefs.isDark ? "Switch to Light" : "Switch to Dark"
             ) {
                 prefs.toggleTheme()
             }
@@ -203,13 +293,24 @@ struct UtilityButtonsSection: View {
 
             dot(labelColor)
 
-            // Sidebar
+            // Sidebar / history
             BarIconButton(
                 icon: "clock.arrow.circlepath",
                 color: vm.sidebarVisible ? .primary : labelColor,
                 help: "History"
             ) {
                 withAnimation(.easeInOut(duration: 0.25)) { vm.sidebarVisible.toggle() }
+            }
+
+            dot(labelColor)
+
+            // Settings
+            BarIconButton(
+                icon: "gearshape",
+                color: labelColor,
+                help: "Settings"
+            ) {
+                vm.showSettings = true
             }
         }
     }

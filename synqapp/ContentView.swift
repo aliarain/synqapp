@@ -32,6 +32,12 @@ struct ContentView: View {
     @State private var showingPermissionAlert = false
     @State private var permissionMessage = ""
 
+    // Onboarding
+    @State private var showOnboarding = false
+
+    // Search
+    @State private var showSearch = false
+
     private var colorScheme: ColorScheme {
         vm.prefs.preferredColorScheme ?? systemColorScheme
     }
@@ -62,6 +68,34 @@ struct ContentView: View {
         .preferredColorScheme(vm.prefs.preferredColorScheme)
         .onReceive(Timer.publish(every: 1, on: .main, in: .common).autoconnect()) { _ in
             tickTimer()
+        }
+        .sheet(isPresented: $vm.showSettings) {
+            SettingsView(colorScheme: colorScheme)
+        }
+        // Onboarding — one time only
+        .sheet(isPresented: $showOnboarding) {
+            OnboardingView(prefs: vm.prefs) { showOnboarding = false }
+        }
+        .onAppear {
+            if !vm.prefs.hasCompletedOnboarding {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                    showOnboarding = true
+                }
+            }
+        }
+        // Search overlay
+        .overlay {
+            if showSearch {
+                SearchView(
+                    isPresented: $showSearch,
+                    entries: vm.entries,
+                    colorScheme: colorScheme
+                ) { entry in
+                    vm.open(entry)
+                }
+                .transition(.opacity)
+                .zIndex(20)
+            }
         }
         // Video recording overlay
         .overlay {
@@ -115,27 +149,31 @@ struct ContentView: View {
                         font: vm.prefs.selectedFont,
                         fontSize: vm.prefs.fontSize,
                         backspaceLocked: vm.prefs.backspaceLocked,
-                        colorScheme: colorScheme
+                        colorScheme: colorScheme,
+                        writingMode: vm.prefs.writingMode
                     )
                     .onChange(of: vm.editorText) { _ in handleTextChange() }
                 }
 
-                // Bottom bar
-                BottomBarView(
-                    vm: vm,
-                    prefs: vm.prefs,
-                    timerRunning: $timerRunning,
-                    timerSeconds: $timerSeconds,
-                    timerTotal: $timerTotal,
-                    isDictating: $isDictating,
-                    onStartVideo: startVideoRecording,
-                    colorScheme: colorScheme
-                )
-                .opacity(bottomNavOpacity)
-                .animation(.easeInOut(duration: 1.0), value: bottomNavOpacity)
-                .onHover { hovering in
-                    isHoveringBar = hovering
-                    updateBarOpacity()
+                // Bottom bar — hidden in Zen unless hovering
+                if vm.prefs.writingMode != .zen || isHoveringBar {
+                    BottomBarView(
+                        vm: vm,
+                        prefs: vm.prefs,
+                        timerRunning: $timerRunning,
+                        timerSeconds: $timerSeconds,
+                        timerTotal: $timerTotal,
+                        isDictating: $isDictating,
+                        onStartVideo: startVideoRecording,
+                        colorScheme: colorScheme
+                    )
+                    .opacity(bottomNavOpacity)
+                    .animation(.easeInOut(duration: 1.0), value: bottomNavOpacity)
+                    .onHover { hovering in
+                        isHoveringBar = hovering
+                        updateBarOpacity()
+                    }
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
                 }
             }
         }
@@ -145,12 +183,24 @@ struct ContentView: View {
                 ? Color(red: 0.08, green: 0.08, blue: 0.08)
                 : Color(red: 0.992, green: 0.992, blue: 0.992)
         )
-        .background(
-            KeyEventHandler(
-                backspaceLocked: vm.prefs.backspaceLocked,
-                onEscape: handleEscape
-            )
+        .keyboardShortcuts(
+            backspaceLocked: vm.prefs.backspaceLocked,
+            writingMode: vm.prefs.writingMode,
+            onModeChange: { vm.prefs.writingMode = $0 },
+            onZenExit: {
+                if vm.prefs.writingMode == .zen {
+                    vm.prefs.writingMode = .flow
+                }
+            }
         )
+        // Zen mode hides the bottom bar entirely
+        .onChange(of: vm.prefs.writingMode) { mode in
+            if mode == .zen {
+                withAnimation(.easeInOut(duration: 0.5)) { bottomNavOpacity = 0 }
+            } else {
+                withAnimation(.easeInOut(duration: 0.3)) { bottomNavOpacity = 1 }
+            }
+        }
     }
 
     // MARK: - Timer
@@ -186,15 +236,6 @@ struct ContentView: View {
         DispatchQueue.main.asyncAfter(deadline: .now() + 3, execute: task)
     }
 
-    // MARK: - Keyboard
-
-    private func handleEscape() {
-        guard let window = NSApp.keyWindow else { return }
-        if window.styleMask.contains(.fullScreen) {
-            window.toggleFullScreen(nil)
-        }
-    }
-
     // MARK: - Video recording
 
     private func startVideoRecording() {
@@ -221,34 +262,93 @@ struct ContentView: View {
     }
 }
 
-// MARK: - Key event handler
+// MARK: - Keyboard shortcut monitor (ViewModifier)
+// NSEvent.addLocalMonitorForEvents intercepts before NSTextView gets it
 
-struct KeyEventHandler: NSViewRepresentable {
+struct KeyboardShortcutMonitor: ViewModifier {
     let backspaceLocked: Bool
-    let onEscape: () -> Void
+    let writingMode: WritingMode
+    let onModeChange: (WritingMode) -> Void
+    let onZenExit: () -> Void
 
-    func makeNSView(context: Context) -> KeyCaptureView {
-        let view = KeyCaptureView()
-        view.backspaceLocked = backspaceLocked
-        view.onEscape = onEscape
-        return view
+    @State private var monitor: Any? = nil
+
+    func body(content: Content) -> some View {
+        content
+            .onAppear { install() }
+            .onDisappear { remove() }
+            .onChange(of: backspaceLocked) { _ in reinstall() }
+            .onChange(of: writingMode.rawValue) { _ in reinstall() }
     }
 
-    func updateNSView(_ nsView: KeyCaptureView, context: Context) {
-        nsView.backspaceLocked = backspaceLocked
-        nsView.onEscape = onEscape
-    }
-
-    class KeyCaptureView: NSView {
-        var backspaceLocked = false
-        var onEscape: (() -> Void)?
-        override var acceptsFirstResponder: Bool { false }
-        override func keyDown(with event: NSEvent) {
-            switch event.keyCode {
-            case 53: onEscape?()
-            case 51, 117: if backspaceLocked { return }; super.keyDown(with: event)
-            default: super.keyDown(with: event)
+    private func install() {
+        remove()
+        monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            // ── ⌘ shortcuts — handle synchronously, no async ─────────
+            if event.modifierFlags.contains(.command) &&
+               !event.modifierFlags.contains(.shift) &&
+               !event.modifierFlags.contains(.option) {
+                switch event.charactersIgnoringModifiers {
+                case "1": DispatchQueue.main.async { self.onModeChange(.flow) };       return nil
+                case "2": DispatchQueue.main.async { self.onModeChange(.focus) };      return nil
+                case "3": DispatchQueue.main.async { self.onModeChange(.typewriter) }; return nil
+                case "4": DispatchQueue.main.async { self.onModeChange(.zen) };        return nil
+                default: break
+                }
             }
+
+            // ── ESC — only consume when we have something to do ──────
+            if event.keyCode == 53 {
+                if let window = NSApp.keyWindow, window.styleMask.contains(.fullScreen) {
+                    // Exit fullscreen synchronously
+                    DispatchQueue.main.async { window.toggleFullScreen(nil) }
+                    return nil  // consume
+                }
+                // Check writingMode on main thread — only consume if in zen
+                // We read writingMode via the closure captured at install time
+                // Use a flag to decide synchronously
+                var shouldConsume = false
+                if Thread.isMainThread {
+                    shouldConsume = self.writingMode == .zen
+                } else {
+                    DispatchQueue.main.sync { shouldConsume = self.writingMode == .zen }
+                }
+                if shouldConsume {
+                    DispatchQueue.main.async { self.onZenExit() }
+                    return nil  // consume — exit zen
+                }
+                // Otherwise let ESC pass through (closes popovers, sheets, etc.)
+                return event
+            }
+
+            // ── Backspace lock ────────────────────────────────────────
+            if self.backspaceLocked && (event.keyCode == 51 || event.keyCode == 117) {
+                return nil
+            }
+
+            return event
         }
+    }
+
+    private func remove() {
+        if let m = monitor { NSEvent.removeMonitor(m); monitor = nil }
+    }
+
+    private func reinstall() { install() }
+}
+
+extension View {
+    func keyboardShortcuts(
+        backspaceLocked: Bool,
+        writingMode: WritingMode,
+        onModeChange: @escaping (WritingMode) -> Void,
+        onZenExit: @escaping () -> Void
+    ) -> some View {
+        modifier(KeyboardShortcutMonitor(
+            backspaceLocked: backspaceLocked,
+            writingMode: writingMode,
+            onModeChange: onModeChange,
+            onZenExit: onZenExit
+        ))
     }
 }

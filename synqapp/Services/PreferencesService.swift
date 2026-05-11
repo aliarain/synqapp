@@ -1,14 +1,14 @@
-
 //  PreferencesService.swift
-//  Spill — persisted user preferences via AppStorage
+//  SynqApp — persisted user preferences
 
 import SwiftUI
 import Combine
 
 final class PreferencesService: ObservableObject {
 
-    // Theme
-    @AppStorage("colorScheme") var colorSchemeRaw: String = "system" {
+    // MARK: - Theme
+
+    @AppStorage("colorScheme") var colorSchemeRaw: String = "light" {
         willSet { objectWillChange.send() }
     }
 
@@ -20,19 +20,19 @@ final class PreferencesService: ObservableObject {
         }
     }
 
+    var isDark: Bool { colorSchemeRaw == "dark" }
+
     func toggleTheme() {
-        switch colorSchemeRaw {
-        case "light": colorSchemeRaw = "dark"
-        default:      colorSchemeRaw = "light"
-        }
+        colorSchemeRaw = isDark ? "light" : "dark"
     }
 
-    // Font
+    func setTheme(_ scheme: ColorScheme) {
+        colorSchemeRaw = scheme == .dark ? "dark" : "light"
+    }
+
+    // MARK: - Font
+
     static let fontSizes: [CGFloat] = [16, 18, 20, 22, 24, 26]
-    static let systemFonts: [String] = {
-        NSFontManager.shared.availableFontFamilies
-            .filter { !$0.hasPrefix(".") }
-    }()
 
     @AppStorage("selectedFont") var selectedFont: String = "Arial" {
         willSet { objectWillChange.send() }
@@ -51,17 +51,71 @@ final class PreferencesService: ObservableObject {
         selectedFont = name
     }
 
-    func setRandomFont() {
-        if let random = Self.systemFonts.randomElement() {
-            selectedFont = random
-        }
+    // MARK: - Writing mode
+
+    @AppStorage("writingMode") var writingModeRaw: String = WritingMode.flow.rawValue {
+        willSet { objectWillChange.send() }
     }
 
-    // Last active entry
+    var writingMode: WritingMode {
+        get { WritingMode(rawValue: writingModeRaw) ?? .flow }
+        set { writingModeRaw = newValue.rawValue }
+    }
+
+    func cycleWritingMode() {
+        let all = WritingMode.allCases
+        let current = all.firstIndex(of: writingMode) ?? 0
+        writingMode = all[(current + 1) % all.count]
+    }
+
+    // MARK: - Word count & reading time
+
+    @AppStorage("showWordCount") var showWordCount: Bool = true {
+        willSet { objectWillChange.send() }
+    }
+
+    @AppStorage("showReadingTime") var showReadingTime: Bool = false {
+        willSet { objectWillChange.send() }
+    }
+
+    // MARK: - Streak & daily goal
+
+    @AppStorage("showStreak") var showStreak: Bool = true {
+        willSet { objectWillChange.send() }
+    }
+
+    @AppStorage("dailyWordGoal") var dailyWordGoal: Int = 0 {
+        willSet { objectWillChange.send() }
+    }
+
+    var hasDailyGoal: Bool { dailyWordGoal > 0 }
+
+    // MARK: - Tags
+
+    @AppStorage("showTags") var showTags: Bool = true {
+        willSet { objectWillChange.send() }
+    }
+
+    // MARK: - Onboarding
+
+    @AppStorage("hasCompletedOnboarding") var hasCompletedOnboarding: Bool = false {
+        willSet { objectWillChange.send() }
+    }
+
+    // MARK: - Misc
+
     @AppStorage("lastEntryFilename") var lastEntryFilename: String = ""
 
-    // Backspace lock
     @AppStorage("backspaceLocked") var backspaceLocked: Bool = false {
         willSet { objectWillChange.send() }
+    }
+
+    @AppStorage("lineWidth") private var lineWidthRaw: Double = 650 {
+        willSet { objectWillChange.send() }
+    }
+
+    var lineWidth: CGFloat {
+        get { CGFloat(lineWidthRaw) }
+        set { lineWidthRaw = Double(newValue) }
     }
 }
