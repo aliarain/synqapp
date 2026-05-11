@@ -1,4 +1,3 @@
-
 //  OnboardingView.swift
 //  SynqApp — one-time welcome + feature setup
 
@@ -27,7 +26,6 @@ struct OnboardingView: View {
                     featuresPage.tag(1)
                     goalsPage.tag(2)
                 }
-                .tabViewStyle(.page(indexDisplayMode: .never))
                 .animation(.easeInOut(duration: 0.3), value: page)
 
                 // Dots + button

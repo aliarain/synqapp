@@ -1,4 +1,3 @@
-
 //  SearchView.swift
 //  SynqApp — full-text search overlay (⌘F)
 
@@ -109,7 +108,7 @@ struct SearchView: View {
             Image(systemName: "magnifyingglass")
                 .font(.system(size: 24))
                 .foregroundColor(.secondary)
-            Text("No entries found for "\(query)"")
+            Text("No entries found for \"\(query)\"")
                 .font(.system(size: 14))
                 .foregroundColor(.secondary)
         }
@@ -223,3 +222,4 @@ struct HighlightedText: View {
         return result
     }
 }
+
