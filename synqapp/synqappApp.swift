@@ -1,32 +1,30 @@
-//
+
 //  synqappApp.swift
-//  synqapp
-//
-//  Created by Ali Arain on 12/05/2026.
-//
+//  SynqApp
 
 import SwiftUI
-import SwiftData
 
 @main
-struct synqappApp: App {
-    var sharedModelContainer: ModelContainer = {
-        let schema = Schema([
-            Item.self,
-        ])
-        let modelConfiguration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
+struct SynqApp: App {
 
-        do {
-            return try ModelContainer(for: schema, configurations: [modelConfiguration])
-        } catch {
-            fatalError("Could not create ModelContainer: \(error)")
-        }
-    }()
+    @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
 
     var body: some Scene {
         WindowGroup {
             ContentView()
         }
-        .modelContainer(sharedModelContainer)
+        .windowStyle(.titleBar)
+        .windowToolbarStyle(.unified)
+        .defaultSize(width: 1100, height: 600)
+    }
+}
+
+final class AppDelegate: NSObject, NSApplicationDelegate {
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        if let window = NSApp.windows.first {
+            window.center()
+            window.setFrameAutosaveName("SynqAppMain")
+            window.title = "SynqApp"
+        }
     }
 }

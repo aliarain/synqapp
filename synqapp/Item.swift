@@ -1,18 +1,4 @@
-//
+
 //  Item.swift
-//  synqapp
-//
-//  Created by Ali Arain on 12/05/2026.
-//
-
-import Foundation
-import SwiftData
-
-@Model
-final class Item {
-    var timestamp: Date
-    
-    init(timestamp: Date) {
-        self.timestamp = timestamp
-    }
-}
+//  Spill — placeholder file (SwiftData model removed; using flat Markdown files instead)
+//  Safe to delete from Xcode project target.
