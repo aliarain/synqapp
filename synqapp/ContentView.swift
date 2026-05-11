@@ -165,6 +165,11 @@ struct ContentView: View {
                         timerTotal: $timerTotal,
                         isDictating: $isDictating,
                         onStartVideo: startVideoRecording,
+                        onPrompt: { prompt in
+                            // Insert prompt into editor
+                            let prefix = vm.editorText.isEmpty ? "" : vm.editorText + "\n\n"
+                            vm.editorText = prefix + prompt + "\n"
+                        },
                         colorScheme: colorScheme
                     )
                     .opacity(bottomNavOpacity)
@@ -191,7 +196,8 @@ struct ContentView: View {
                 if vm.prefs.writingMode == .zen {
                     vm.prefs.writingMode = .flow
                 }
-            }
+            },
+            onSearch: { withAnimation { showSearch = true } }
         )
         // Zen mode hides the bottom bar entirely
         .onChange(of: vm.prefs.writingMode) { mode in
@@ -270,6 +276,7 @@ struct KeyboardShortcutMonitor: ViewModifier {
     let writingMode: WritingMode
     let onModeChange: (WritingMode) -> Void
     let onZenExit: () -> Void
+    let onSearch: () -> Void
 
     @State private var monitor: Any? = nil
 
@@ -284,7 +291,6 @@ struct KeyboardShortcutMonitor: ViewModifier {
     private func install() {
         remove()
         monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
-            // ── ⌘ shortcuts — handle synchronously, no async ─────────
             if event.modifierFlags.contains(.command) &&
                !event.modifierFlags.contains(.shift) &&
                !event.modifierFlags.contains(.option) {
@@ -293,20 +299,16 @@ struct KeyboardShortcutMonitor: ViewModifier {
                 case "2": DispatchQueue.main.async { self.onModeChange(.focus) };      return nil
                 case "3": DispatchQueue.main.async { self.onModeChange(.typewriter) }; return nil
                 case "4": DispatchQueue.main.async { self.onModeChange(.zen) };        return nil
+                case "f": DispatchQueue.main.async { self.onSearch() };                return nil
                 default: break
                 }
             }
 
-            // ── ESC — only consume when we have something to do ──────
             if event.keyCode == 53 {
                 if let window = NSApp.keyWindow, window.styleMask.contains(.fullScreen) {
-                    // Exit fullscreen synchronously
                     DispatchQueue.main.async { window.toggleFullScreen(nil) }
-                    return nil  // consume
+                    return nil
                 }
-                // Check writingMode on main thread — only consume if in zen
-                // We read writingMode via the closure captured at install time
-                // Use a flag to decide synchronously
                 var shouldConsume = false
                 if Thread.isMainThread {
                     shouldConsume = self.writingMode == .zen
@@ -315,13 +317,11 @@ struct KeyboardShortcutMonitor: ViewModifier {
                 }
                 if shouldConsume {
                     DispatchQueue.main.async { self.onZenExit() }
-                    return nil  // consume — exit zen
+                    return nil
                 }
-                // Otherwise let ESC pass through (closes popovers, sheets, etc.)
                 return event
             }
 
-            // ── Backspace lock ────────────────────────────────────────
             if self.backspaceLocked && (event.keyCode == 51 || event.keyCode == 117) {
                 return nil
             }
@@ -342,13 +342,15 @@ extension View {
         backspaceLocked: Bool,
         writingMode: WritingMode,
         onModeChange: @escaping (WritingMode) -> Void,
-        onZenExit: @escaping () -> Void
+        onZenExit: @escaping () -> Void,
+        onSearch: @escaping () -> Void
     ) -> some View {
         modifier(KeyboardShortcutMonitor(
             backspaceLocked: backspaceLocked,
             writingMode: writingMode,
             onModeChange: onModeChange,
-            onZenExit: onZenExit
+            onZenExit: onZenExit,
+            onSearch: onSearch
         ))
     }
 }

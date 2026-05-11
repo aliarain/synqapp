@@ -206,6 +206,72 @@ struct SettingsView: View {
                         }
                     }
 
+                    // ── Writing Features ─────────────────────────────────
+                    SettingsSection(title: "Writing Features", colorScheme: colorScheme) {
+                        VStack(spacing: 0) {
+                            SettingsToggleRow(icon: "number", title: "Word count",
+                                             subtitle: "Show live word count in the bottom bar",
+                                             isOn: Binding(get: { PreferencesService().showWordCount },
+                                                           set: { PreferencesService().showWordCount = $0 }))
+                            Divider().padding(.leading, 44)
+                            SettingsToggleRow(icon: "clock", title: "Reading time",
+                                             subtitle: "Estimated read time shown in bottom bar",
+                                             isOn: Binding(get: { PreferencesService().showReadingTime },
+                                                           set: { PreferencesService().showReadingTime = $0 }))
+                            Divider().padding(.leading, 44)
+                            SettingsToggleRow(icon: "flame", title: "Writing streak",
+                                             subtitle: "Track consecutive days you've written",
+                                             isOn: Binding(get: { PreferencesService().showStreak },
+                                                           set: { PreferencesService().showStreak = $0 }))
+                            Divider().padding(.leading, 44)
+                            SettingsToggleRow(icon: "tag", title: "Tags",
+                                             subtitle: "Parse #tags from entries for filtering",
+                                             isOn: Binding(get: { PreferencesService().showTags },
+                                                           set: { PreferencesService().showTags = $0 }))
+                            Divider().padding(.leading, 44)
+
+                            // Daily word goal stepper
+                            HStack(spacing: 12) {
+                                Image(systemName: "target")
+                                    .font(.system(size: 15))
+                                    .foregroundColor(.accentColor)
+                                    .frame(width: 28)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text("Daily word goal")
+                                        .font(.system(size: 14, weight: .medium))
+                                    Text(PreferencesService().dailyWordGoal == 0
+                                         ? "No goal set"
+                                         : "\(PreferencesService().dailyWordGoal) words per day")
+                                        .font(.system(size: 12))
+                                        .foregroundColor(.secondary)
+                                }
+                                Spacer()
+                                HStack(spacing: 8) {
+                                    ForEach([0, 100, 250, 500, 750, 1000], id: \.self) { goal in
+                                        Button {
+                                            PreferencesService().dailyWordGoal = goal
+                                        } label: {
+                                            Text(goal == 0 ? "Off" : "\(goal)")
+                                                .font(.system(size: 11, weight: .medium))
+                                                .foregroundColor(PreferencesService().dailyWordGoal == goal ? .white : .primary)
+                                                .padding(.horizontal, 8)
+                                                .padding(.vertical, 4)
+                                                .background(
+                                                    PreferencesService().dailyWordGoal == goal
+                                                        ? Color.accentColor
+                                                        : Color.secondary.opacity(0.12),
+                                                    in: RoundedRectangle(cornerRadius: 6)
+                                                )
+                                        }
+                                        .buttonStyle(.plain)
+                                    }
+                                }
+                            }
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 12)
+                        }
+                    }
+
                     // ── About ────────────────────────────────────────────
                     SettingsSection(title: "About", colorScheme: colorScheme) {
                         VStack(alignment: .leading, spacing: 8) {
