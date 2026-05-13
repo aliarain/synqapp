@@ -17,6 +17,7 @@ struct JournalEntry: Identifiable, Equatable {
     var body: String
     var entryType: EntryType = .text
     var videoFilename: String? = nil
+    var isPinned: Bool = false
 
     // MARK: - Display
 

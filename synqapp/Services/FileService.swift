@@ -84,8 +84,29 @@ final class FileService {
 
     // MARK: - CRUD
 
+    // Pinned entry IDs persisted in UserDefaults
+    private var pinnedIDs: Set<String> {
+        get { Set(UserDefaults.standard.stringArray(forKey: "pinnedEntryIDs") ?? []) }
+        set { UserDefaults.standard.set(Array(newValue), forKey: "pinnedEntryIDs") }
+    }
+
+    func togglePin(_ entry: JournalEntry) {
+        var ids = pinnedIDs
+        if ids.contains(entry.id.uuidString) {
+            ids.remove(entry.id.uuidString)
+        } else {
+            ids.insert(entry.id.uuidString)
+        }
+        pinnedIDs = ids
+    }
+
+    func isPinned(_ entry: JournalEntry) -> Bool {
+        pinnedIDs.contains(entry.id.uuidString)
+    }
+
     func loadAll() -> [JournalEntry] {
         guard let files = try? fm.contentsOfDirectory(at: synqDir, includingPropertiesForKeys: nil) else { return [] }
+        let pins = pinnedIDs
 
         return files
             .filter { $0.pathExtension == "md" }
@@ -95,7 +116,6 @@ final class FileService {
                       let body = try? String(contentsOf: url, encoding: .utf8)
                 else { return nil }
 
-                // Check for associated video
                 let videoFilename = filename.replacingOccurrences(of: ".md", with: ".mov")
                 let hasVideo = videoExists(videoFilename)
 
@@ -105,10 +125,14 @@ final class FileService {
                     createdAt: date,
                     body: body,
                     entryType: hasVideo ? .video : .text,
-                    videoFilename: hasVideo ? videoFilename : nil
+                    videoFilename: hasVideo ? videoFilename : nil,
+                    isPinned: pins.contains(id.uuidString)
                 )
             }
-            .sorted { $0.createdAt > $1.createdAt }
+            .sorted { lhs, rhs in
+                if lhs.isPinned != rhs.isPinned { return lhs.isPinned }
+                return lhs.createdAt > rhs.createdAt
+            }
     }
 
     @discardableResult
@@ -205,5 +229,48 @@ When you're ready, hit **Reflect** to talk it through with an AI that's actually
 
     func openInFinder() {
         NSWorkspace.shared.open(synqDir)
+    }
+
+    // MARK: - Export
+
+    func exportAsMarkdown(_ entry: JournalEntry, to url: URL) throws {
+        try entry.body.write(to: url, atomically: true, encoding: .utf8)
+    }
+
+    func exportAsPlainText(_ entry: JournalEntry, to url: URL) throws {
+        // Strip markdown syntax for plain text
+        var text = entry.body
+        // Remove heading markers
+        text = text.replacingOccurrences(of: #"^#{1,6}\s+"#, with: "", options: .regularExpression)
+        // Remove bold/italic markers
+        text = text.replacingOccurrences(of: #"\*{1,3}([^*]+)\*{1,3}"#, with: "$1", options: .regularExpression)
+        text = text.replacingOccurrences(of: #"_{1,3}([^_]+)_{1,3}"#, with: "$1", options: .regularExpression)
+        // Remove inline code
+        text = text.replacingOccurrences(of: #"`([^`]+)`"#, with: "$1", options: .regularExpression)
+        try text.write(to: url, atomically: true, encoding: .utf8)
+    }
+
+    func exportAllAsZip(entries: [JournalEntry], to url: URL) throws {
+        // Write all .md files to a temp folder then zip
+        let tmp = FileManager.default.temporaryDirectory
+            .appendingPathComponent("SynqApp-Export-\(UUID().uuidString)", isDirectory: true)
+        try fm.createDirectory(at: tmp, withIntermediateDirectories: true)
+
+        for entry in entries where entry.entryType == .text {
+            let name = entry.filename
+            let dest = tmp.appendingPathComponent(name)
+            try entry.body.write(to: dest, atomically: true, encoding: .utf8)
+        }
+
+        // Use Process to zip
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/zip")
+        process.arguments = ["-r", url.path, "."]
+        process.currentDirectoryURL = tmp
+        try process.run()
+        process.waitUntilExit()
+
+        // Clean up temp
+        try? fm.removeItem(at: tmp)
     }
 }

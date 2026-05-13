@@ -147,6 +147,16 @@ final class AppViewModel: ObservableObject {
         }
     }
 
+    func togglePin(_ entry: JournalEntry) {
+        fileService.togglePin(entry)
+        // Reload to get updated sort order (pinned first)
+        let activeID = activeEntry?.id
+        entries = fileService.loadAll()
+        if let id = activeID, let restored = entries.first(where: { $0.id == id }) {
+            activeEntry = restored
+        }
+    }
+
     func saveCurrentEntry() {
         guard var entry = activeEntry, entry.entryType == .text else { return }
         entry.body = editorText
