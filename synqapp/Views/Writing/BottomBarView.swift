@@ -16,6 +16,7 @@ struct BottomBarView: View {
 
     var onStartVideo: () -> Void
     var onPrompt: (String) -> Void   // called with prompt text
+    var onReadingToggle: () -> Void
 
     let colorScheme: ColorScheme
 
@@ -46,6 +47,7 @@ struct BottomBarView: View {
                 timerTotal: $timerTotal,
                 isDictating: $isDictating,
                 onStartVideo: onStartVideo,
+                onReadingToggle: onReadingToggle,
                 colorScheme: colorScheme
             )
         }
@@ -201,6 +203,7 @@ struct UtilityButtonsSection: View {
     @Binding var isDictating: Bool
 
     var onStartVideo: () -> Void
+    var onReadingToggle: () -> Void
 
     let colorScheme: ColorScheme
 
@@ -246,6 +249,13 @@ struct UtilityButtonsSection: View {
             // Video
             BarIconButton(icon: "video.fill", color: labelColor, help: "Record video entry") {
                 onStartVideo()
+            }
+
+            dot(labelColor)
+
+            // Reading view
+            BarIconButton(icon: "book", color: labelColor, help: "Reading view (⌘R)") {
+                onReadingToggle()
             }
 
             dot(labelColor)

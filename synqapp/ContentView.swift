@@ -38,6 +38,9 @@ struct ContentView: View {
     // Search
     @State private var showSearch = false
 
+    // Reading view
+    @State private var isReadingMode = false
+
     private var colorScheme: ColorScheme {
         vm.prefs.preferredColorScheme ?? systemColorScheme
     }
@@ -82,6 +85,10 @@ struct ContentView: View {
                     showOnboarding = true
                 }
             }
+        }
+        // Reload entries when quick capture saves
+        .onReceive(NotificationCenter.default.publisher(for: .quickCaptureDidSave)) { _ in
+            vm.loadEntries()
         }
         // Search overlay
         .overlay {
@@ -138,10 +145,18 @@ struct ContentView: View {
 
             // Editor + bottom bar
             ZStack(alignment: .bottom) {
-                // Video player or text editor
+                // Video player or text editor or reading view
                 if let videoURL = vm.currentVideoURL {
                     VideoPlayerView(videoURL: videoURL)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else if isReadingMode {
+                    ReadingView(
+                        text: vm.editorText,
+                        font: vm.prefs.selectedFont,
+                        fontSize: vm.prefs.fontSize,
+                        colorScheme: colorScheme,
+                        onExit: { withAnimation { isReadingMode = false } }
+                    )
                 } else {
                     TextEditorView(
                         text: $vm.editorText,
@@ -166,10 +181,10 @@ struct ContentView: View {
                         isDictating: $isDictating,
                         onStartVideo: startVideoRecording,
                         onPrompt: { prompt in
-                            // Insert prompt into editor
                             let prefix = vm.editorText.isEmpty ? "" : vm.editorText + "\n\n"
                             vm.editorText = prefix + prompt + "\n"
                         },
+                        onReadingToggle: { withAnimation { isReadingMode.toggle() } },
                         colorScheme: colorScheme
                     )
                     .opacity(bottomNavOpacity)
@@ -193,11 +208,10 @@ struct ContentView: View {
             writingMode: vm.prefs.writingMode,
             onModeChange: { vm.prefs.writingMode = $0 },
             onZenExit: {
-                if vm.prefs.writingMode == .zen {
-                    vm.prefs.writingMode = .flow
-                }
+                if vm.prefs.writingMode == .zen { vm.prefs.writingMode = .flow }
             },
-            onSearch: { withAnimation { showSearch = true } }
+            onSearch: { withAnimation { showSearch = true } },
+            onReadingToggle: { withAnimation { isReadingMode.toggle() } }
         )
         // Zen mode hides the bottom bar entirely
         .onChange(of: vm.prefs.writingMode) { mode in
@@ -277,6 +291,7 @@ struct KeyboardShortcutMonitor: ViewModifier {
     let onModeChange: (WritingMode) -> Void
     let onZenExit: () -> Void
     let onSearch: () -> Void
+    let onReadingToggle: () -> Void
 
     @State private var monitor: Any? = nil
 
@@ -300,6 +315,7 @@ struct KeyboardShortcutMonitor: ViewModifier {
                 case "3": DispatchQueue.main.async { self.onModeChange(.typewriter) }; return nil
                 case "4": DispatchQueue.main.async { self.onModeChange(.zen) };        return nil
                 case "f": DispatchQueue.main.async { self.onSearch() };                return nil
+                case "r": DispatchQueue.main.async { self.onReadingToggle() };         return nil
                 default: break
                 }
             }
@@ -343,14 +359,16 @@ extension View {
         writingMode: WritingMode,
         onModeChange: @escaping (WritingMode) -> Void,
         onZenExit: @escaping () -> Void,
-        onSearch: @escaping () -> Void
+        onSearch: @escaping () -> Void,
+        onReadingToggle: @escaping () -> Void
     ) -> some View {
         modifier(KeyboardShortcutMonitor(
             backspaceLocked: backspaceLocked,
             writingMode: writingMode,
             onModeChange: onModeChange,
             onZenExit: onZenExit,
-            onSearch: onSearch
+            onSearch: onSearch,
+            onReadingToggle: onReadingToggle
         ))
     }
 }
