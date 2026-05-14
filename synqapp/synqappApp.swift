@@ -14,7 +14,6 @@ struct SynqApp: App {
             ContentView()
         }
         .windowStyle(.titleBar)
-        .windowToolbarStyle(.unified)
         .defaultSize(width: 1100, height: 600)
     }
 }
@@ -31,6 +30,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             window.center()
             window.setFrameAutosaveName("SynqAppMain")
             window.title = "SynqApp"
+            // Center the title in the toolbar
+            window.titleVisibility = .visible
+            window.toolbar = nil   // remove toolbar so title sits centered in titlebar
         }
 
         // Start global hotkey

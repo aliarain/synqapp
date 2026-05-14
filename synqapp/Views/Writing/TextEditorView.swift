@@ -198,6 +198,7 @@ struct TextEditorView: View {
             .lineSpacing(lineSpacing)
             .tint(accentColor)
             .scrollContentBackground(.hidden)
+            .scrollIndicators(.never)          // hide TextEditor's own native scrollbar
             .background(Color.clear)
             .padding(.leading, 5)
             .padding(.top, 40)
@@ -288,6 +289,7 @@ struct FocusModeEditor: NSViewRepresentable {
         scrollView.backgroundColor = .clear
         scrollView.hasVerticalScroller = false
         scrollView.hasHorizontalScroller = false
+        scrollView.autohidesScrollers = true
 
         context.coordinator.textView = textView
         return scrollView

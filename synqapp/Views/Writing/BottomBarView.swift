@@ -73,11 +73,22 @@ struct FontButtonsSection: View {
     let entries: [JournalEntry]
     var onPrompt: (String) -> Void
 
+    @State private var showFontPicker = false
+
     private var labelColor: Color {
         colorScheme == .dark ? Color.gray.opacity(0.8) : Color.gray
     }
 
     private var stats: StatsService { StatsService.shared }
+
+    // Label for the font button — shows current font if it's not Arial/Times
+    private var fontButtonLabel: String {
+        switch prefs.selectedFont {
+        case "Arial":            return "Arial"
+        case "Times New Roman":  return "Serif"
+        default:                 return prefs.selectedFont
+        }
+    }
 
     var body: some View {
         HStack(spacing: 8) {
@@ -86,23 +97,44 @@ struct FontButtonsSection: View {
                 prefs.cycleFontSize()
             }
             dot(labelColor)
+
+            // Arial
             BarButton(label: "Arial", color: labelColor) {
-                prefs.setFont("Arial"); randomFontName = nil
+                prefs.setFont("Arial")
+                randomFontName = nil
             }
             dot(labelColor)
+
+            // Serif
             BarButton(label: "Serif", color: labelColor) {
-                prefs.setFont("Times New Roman"); randomFontName = nil
+                prefs.setFont("Times New Roman")
+                randomFontName = nil
             }
             dot(labelColor)
+
+            // Font picker — shows current custom font name or "Fonts"
             BarButton(
-                label: randomFontName.map { "Random \($0)" } ?? "Random",
+                label: (randomFontName != nil || (prefs.selectedFont != "Arial" && prefs.selectedFont != "Times New Roman"))
+                    ? prefs.selectedFont
+                    : "Fonts",
                 color: labelColor
             ) {
-                let families = NSFontManager.shared.availableFontFamilies.filter { !$0.hasPrefix(".") }
-                if let pick = families.randomElement() {
-                    prefs.setFont(pick)
-                    randomFontName = pick
-                }
+                showFontPicker = true
+            }
+            .popover(
+                isPresented: $showFontPicker,
+                attachmentAnchor: .point(UnitPoint(x: 0.5, y: 0)),
+                arrowEdge: .top
+            ) {
+                FontPickerPopover(
+                    selectedFont: prefs.selectedFont,
+                    colorScheme: colorScheme,
+                    onSelect: { font in
+                        prefs.setFont(font)
+                        randomFontName = font
+                        showFontPicker = false
+                    }
+                )
             }
 
             // ── Stats cluster ────────────────────────────────────────
@@ -153,6 +185,140 @@ struct FontButtonsSection: View {
     @ViewBuilder
     private func dot(_ color: Color) -> some View {
         Text("•").font(.system(size: 10)).foregroundColor(color)
+    }
+}
+
+// MARK: - Font picker popover
+
+struct FontPickerPopover: View {
+
+    let selectedFont: String
+    let colorScheme: ColorScheme
+    let onSelect: (String) -> Void
+
+    @State private var searchText = ""
+    @FocusState private var searchFocused: Bool
+
+    // All installed font families, cached
+    private static let allFonts: [String] = {
+        NSFontManager.shared.availableFontFamilies
+            .filter { !$0.hasPrefix(".") }
+            .sorted()
+    }()
+
+    private var filtered: [String] {
+        let q = searchText.trimmingCharacters(in: .whitespaces).lowercased()
+        guard !q.isEmpty else { return Self.allFonts }
+        return Self.allFonts.filter { $0.lowercased().contains(q) }
+    }
+
+    private var bg: Color {
+        colorScheme == .dark
+            ? Color(red: 0.1, green: 0.1, blue: 0.1)
+            : Color.white
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            // Search field
+            HStack(spacing: 8) {
+                Image(systemName: "magnifyingglass")
+                    .foregroundColor(.secondary)
+                    .font(.system(size: 13))
+                TextField("Search fonts…", text: $searchText)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 13))
+                    .focused($searchFocused)
+                if !searchText.isEmpty {
+                    Button { searchText = "" } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .foregroundColor(.secondary)
+                            .font(.system(size: 12))
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+
+            Divider()
+
+            // Font list
+            ScrollViewReader { proxy in
+                ScrollView(.vertical, showsIndicators: false) {
+                    LazyVStack(spacing: 0) {
+                        // Quick picks at top
+                        if searchText.isEmpty {
+                            quickPickRow("Arial", label: "Arial")
+                            quickPickRow("Times New Roman", label: "Times New Roman")
+                            quickPickRow("Georgia", label: "Georgia")
+                            quickPickRow("Helvetica Neue", label: "Helvetica Neue")
+                            quickPickRow("Menlo", label: "Menlo")
+                            Divider().padding(.vertical, 4)
+                        }
+
+                        ForEach(filtered, id: \.self) { font in
+                            fontRow(font)
+                                .id(font)
+                        }
+                    }
+                    .padding(.vertical, 4)
+                }
+                .frame(height: 320)
+                .onAppear {
+                    searchFocused = true
+                    // Scroll to selected font
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                        proxy.scrollTo(selectedFont, anchor: .center)
+                    }
+                }
+            }
+        }
+        .frame(width: 240)
+        .background(bg)
+    }
+
+    @ViewBuilder
+    private func quickPickRow(_ font: String, label: String) -> some View {
+        fontRowContent(font: font, displayLabel: label)
+    }
+
+    @ViewBuilder
+    private func fontRow(_ font: String) -> some View {
+        fontRowContent(font: font, displayLabel: font)
+    }
+
+    @ViewBuilder
+    private func fontRowContent(font: String, displayLabel: String) -> some View {
+        let isSelected = selectedFont == font
+
+        Button {
+            onSelect(font)
+        } label: {
+            HStack {
+                // Font name in its own typeface
+                Text(displayLabel)
+                    .font(.custom(font, size: 14))
+                    .lineLimit(1)
+                    .foregroundColor(isSelected ? .white : .primary)
+                Spacer()
+                if isSelected {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundColor(.white)
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 7)
+            .background(
+                isSelected ? Color.accentColor : Color.clear,
+                in: RoundedRectangle(cornerRadius: 6)
+            )
+            .padding(.horizontal, 4)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { h in h ? NSCursor.pointingHand.push() : NSCursor.pop() }
     }
 }
 
