@@ -9,13 +9,41 @@ import SynqCore
 struct SynqApp: App {
 
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
+    @AppStorage("showMenuBarIcon") private var showMenuBarIcon = true
 
     var body: some Scene {
-        WindowGroup {
+        WindowGroup(id: "main") {
             ContentView()
         }
         .windowStyle(.titleBar)
-        .defaultSize(width: 1100, height: 600)
+        .defaultSize(width: 1100, height: 680)
+
+        MenuBarExtra("SynqApp", systemImage: "pencil.line", isInserted: $showMenuBarIcon) {
+            MenuBarContent(appDelegate: appDelegate)
+        }
+    }
+}
+
+// MARK: - Menu bar
+
+struct MenuBarContent: View {
+    let appDelegate: AppDelegate
+    @Environment(\.openWindow) private var openWindow
+
+    var body: some View {
+        Button("Quick Note") { appDelegate.showQuickCapture() }
+            .keyboardShortcut(.space, modifiers: .option)
+        Button("Open SynqApp") {
+            if let window = NSApp.windows.first(where: { $0.frameAutosaveName == "SynqAppMain" }) {
+                window.makeKeyAndOrderFront(nil)
+            } else {
+                openWindow(id: "main")
+            }
+            NSApp.activate(ignoringOtherApps: true)
+        }
+        Divider()
+        Button("Quit SynqApp") { NSApp.terminate(nil) }
+            .keyboardShortcut("q")
     }
 }
 

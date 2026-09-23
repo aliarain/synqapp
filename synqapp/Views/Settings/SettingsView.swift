@@ -17,6 +17,7 @@ struct SettingsView: View {
     @State private var keyStatus: KeyStatus? = nil
     @State private var notesPath = FileService.shared.notesDir.path
     @State private var storageError: String?
+    @AppStorage("showMenuBarIcon") private var showMenuBarIcon = true
 
     enum KeyStatus {
         case saved, testing, valid, failure(String)
@@ -182,6 +183,29 @@ struct SettingsView: View {
                             if let storageError {
                                 Text(storageError).font(.system(size: 11)).foregroundColor(.red)
                             }
+                        }
+                    }
+
+                    // ── Quick capture ────────────────────────────────────
+                    SettingsSection(title: "Quick Capture", colorScheme: colorScheme) {
+                        VStack(spacing: 0) {
+                            HStack(spacing: 12) {
+                                Image(systemName: "keyboard").font(.system(size: 15)).foregroundColor(.accentColor).frame(width: 28)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text("Global shortcut").font(.system(size: 14, weight: .medium))
+                                    Text("Jot a note from any app, no permissions needed").font(.system(size: 12)).foregroundColor(.secondary)
+                                }
+                                Spacer()
+                                Text("⌥ Space")
+                                    .font(.system(size: 12, weight: .medium, design: .monospaced))
+                                    .padding(.horizontal, 8).padding(.vertical, 4)
+                                    .background(Color.secondary.opacity(0.12), in: RoundedRectangle(cornerRadius: 6))
+                            }
+                            .padding(.horizontal, 16).padding(.vertical, 12)
+                            Divider().padding(.leading, 44)
+                            SettingsToggleRow(icon: "menubar.rectangle", title: "Menu bar icon",
+                                              subtitle: "Quick note and open SynqApp from the menu bar",
+                                              isOn: $showMenuBarIcon)
                         }
                     }
 

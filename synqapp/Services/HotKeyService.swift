@@ -1,10 +1,10 @@
-
 //  HotKeyService.swift
-//  SynqApp — global hotkey (⌥Space) to show quick capture window
-//  Uses CGEventTap — requires Accessibility permission
+//  SynqApp — global ⌥Space hotkey for quick capture
+//  Registered through Carbon's hotkey API, which needs no Accessibility permission
+//  (unlike a CGEventTap, which also sees every keystroke typed in every app).
 
 import AppKit
-import Carbon
+import Carbon.HIToolbox
 
 final class HotKeyService {
 
@@ -12,81 +12,39 @@ final class HotKeyService {
     private init() {}
 
     var onTrigger: (() -> Void)?
-    private var eventTap: CFMachPort?
-    private var runLoopSource: CFRunLoopSource?
 
-    // MARK: - Start / stop
+    private var hotKeyRef: EventHotKeyRef?
+    private var handlerRef: EventHandlerRef?
 
     func start() {
-        guard eventTap == nil else { return }
+        guard hotKeyRef == nil else { return }
 
-        // Check accessibility permission
-        let options: NSDictionary = [kAXTrustedCheckOptionPrompt.takeUnretainedValue(): true]
-        let trusted = AXIsProcessTrustedWithOptions(options)
-        guard trusted else {
-            print("[HotKeyService] Accessibility permission not granted — global hotkey disabled")
-            return
-        }
-
-        let mask = CGEventMask(1 << CGEventType.keyDown.rawValue)
-        let tap = CGEvent.tapCreate(
-            tap: .cgSessionEventTap,
-            place: .headInsertEventTap,
-            options: .defaultTap,
-            eventsOfInterest: mask,
-            callback: { proxy, type, event, refcon -> Unmanaged<CGEvent>? in
-                guard let refcon else { return Unmanaged.passRetained(event) }
-                let service = Unmanaged<HotKeyService>.fromOpaque(refcon).takeUnretainedValue()
-                return service.handle(proxy: proxy, type: type, event: event)
+        var eventType = EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed))
+        InstallEventHandler(
+            GetApplicationEventTarget(),
+            { _, _, userData in
+                guard let userData else { return OSStatus(eventNotHandledErr) }
+                let service = Unmanaged<HotKeyService>.fromOpaque(userData).takeUnretainedValue()
+                MainActor.assumeIsolated { service.onTrigger?() }
+                return noErr
             },
-            userInfo: Unmanaged.passUnretained(self).toOpaque()
+            1,
+            &eventType,
+            Unmanaged.passUnretained(self).toOpaque(),
+            &handlerRef
         )
 
-        guard let tap else { return }
-        eventTap = tap
-
-        let source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
-        runLoopSource = source
-        CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
-        CGEvent.tapEnable(tap: tap, enable: true)
+        let id = EventHotKeyID(signature: OSType(0x53594E51), id: 1) // "SYNQ"
+        let status = RegisterEventHotKey(UInt32(kVK_Space), UInt32(optionKey), id, GetApplicationEventTarget(), 0, &hotKeyRef)
+        if status != noErr {
+            print("[HotKeyService] ⌥Space is already taken by another app (status \(status))")
+        }
     }
 
     func stop() {
-        if let tap = eventTap {
-            CGEvent.tapEnable(tap: tap, enable: false)
-            if let source = runLoopSource {
-                CFRunLoopRemoveSource(CFRunLoopGetMain(), source, .commonModes)
-            }
-        }
-        eventTap = nil
-        runLoopSource = nil
-    }
-
-    // MARK: - Event handler
-
-    private func handle(
-        proxy: CGEventTapProxy,
-        type: CGEventType,
-        event: CGEvent
-    ) -> Unmanaged<CGEvent>? {
-        guard type == .keyDown else { return Unmanaged.passRetained(event) }
-
-        let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
-        let flags = event.flags
-
-        // ⌥Space — keyCode 49 = Space
-        let isOptionSpace = keyCode == 49 && flags.contains(.maskAlternate)
-            && !flags.contains(.maskCommand)
-            && !flags.contains(.maskShift)
-            && !flags.contains(.maskControl)
-
-        if isOptionSpace {
-            DispatchQueue.main.async { [weak self] in
-                self?.onTrigger?()
-            }
-            return nil // consume the event
-        }
-
-        return Unmanaged.passRetained(event)
+        if let hotKeyRef { UnregisterEventHotKey(hotKeyRef) }
+        if let handlerRef { RemoveEventHandler(handlerRef) }
+        hotKeyRef = nil
+        handlerRef = nil
     }
 }
