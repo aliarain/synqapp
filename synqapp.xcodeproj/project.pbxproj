@@ -281,8 +281,8 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_NSCameraUsageDescription = "SynqApp uses your camera to record video journal entries.";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
-				INFOPLIST_KEY_NSMicrophoneUsageDescription = "SynqApp uses your microphone for video recording and dictation.";
-				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "SynqApp transcribes your video entries so you can reflect on them.";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "SynqApp uses your microphone for video entries and voice reflection.";
+				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "SynqApp transcribes your video entries and what you say during voice reflection.";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
@@ -327,8 +327,8 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_NSCameraUsageDescription = "SynqApp uses your camera to record video journal entries.";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
-				INFOPLIST_KEY_NSMicrophoneUsageDescription = "SynqApp uses your microphone for video recording and dictation.";
-				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "SynqApp transcribes your video entries so you can reflect on them.";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "SynqApp uses your microphone for video entries and voice reflection.";
+				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "SynqApp transcribes your video entries and what you say during voice reflection.";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
