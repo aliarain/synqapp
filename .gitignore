@@ -58,3 +58,9 @@ Backups.backupdb
 MobileBackups.trash
 tmbootpicker.efi
 *.txt
+# Xcode
+xcuserdata/
+DerivedData/
+.build/
+.swiftpm/
+build/
