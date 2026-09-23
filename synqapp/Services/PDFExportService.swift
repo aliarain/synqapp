@@ -1,60 +1,48 @@
-
 //  PDFExportService.swift
-//  Spill — exports a journal entry to PDF
+//  SynqApp — exports a journal entry to a paginated PDF
 
 import AppKit
+import CoreText
 import SynqCore
 
-final class PDFExportService {
+enum PDFExportService {
 
-    static func export(entry: JournalEntry, to url: URL, fontName: String, fontSize: CGFloat) {
-        let pageSize = CGSize(width: 612, height: 792) // US Letter
-        let margin: CGFloat = 72
-        let lineHeight: CGFloat = fontSize + 4.0
+    /// Lays the whole entry out with Core Text, wrapping long paragraphs and flowing onto as many
+    /// US Letter pages as needed. (Laying out one line box per paragraph silently dropped any
+    /// paragraph longer than a single line.)
+    static func export(entry: JournalEntry, to url: URL, fontName: String, fontSize: CGFloat) throws {
+        let pageRect = CGRect(x: 0, y: 0, width: 612, height: 792)
+        let textRect = pageRect.insetBy(dx: 72, dy: 72)
 
         let font = NSFont(name: fontName, size: fontSize) ?? NSFont.systemFont(ofSize: fontSize)
-        let attrs: [NSAttributedString.Key: Any] = [
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.lineSpacing = fontSize * 0.3
+        paragraph.paragraphSpacing = fontSize * 0.5
+        let text = NSAttributedString(string: entry.content, attributes: [
             .font: font,
-            .foregroundColor: NSColor.black
-        ]
+            .foregroundColor: NSColor.black,
+            .paragraphStyle: paragraph,
+        ])
 
-        let text = entry.body
-        let lines = text.components(separatedBy: .newlines)
+        let data = NSMutableData()
+        var mediaBox = pageRect
+        guard let consumer = CGDataConsumer(data: data as CFMutableData),
+              let ctx = CGContext(consumer: consumer, mediaBox: &mediaBox, nil)
+        else { throw CocoaError(.fileWriteUnknown) }
 
-        let pdfData = NSMutableData()
-        guard let consumer = CGDataConsumer(data: pdfData as CFMutableData) else { return }
-
-        var mediaBox = CGRect(origin: .zero, size: pageSize)
-        guard let ctx = CGContext(consumer: consumer, mediaBox: &mediaBox, nil) else { return }
-
-        let nsCtx = NSGraphicsContext(cgContext: ctx, flipped: false)
-        NSGraphicsContext.saveGraphicsState()
-        NSGraphicsContext.current = nsCtx
-
-        ctx.beginPDFPage(nil)
-
-        var y = pageSize.height - margin
-        let maxWidth = pageSize.width - margin * 2
-
-        for line in lines {
-            let str = NSAttributedString(string: line.isEmpty ? " " : line, attributes: attrs)
-            let framesetter = CTFramesetterCreateWithAttributedString(str)
-            let path = CGPath(rect: CGRect(x: margin, y: y - lineHeight, width: maxWidth, height: lineHeight), transform: nil)
-            let frame = CTFramesetterCreateFrame(framesetter, CFRangeMake(0, 0), path, nil)
+        let framesetter = CTFramesetterCreateWithAttributedString(text)
+        var location = 0
+        repeat {
+            ctx.beginPDFPage(nil)
+            let frame = CTFramesetterCreateFrame(framesetter, CFRange(location: location, length: 0), CGPath(rect: textRect, transform: nil), nil)
             CTFrameDraw(frame, ctx)
-            y -= lineHeight
-            if y < margin {
-                ctx.endPDFPage()
-                ctx.beginPDFPage(nil)
-                y = pageSize.height - margin
-            }
-        }
-
-        ctx.endPDFPage()
+            ctx.endPDFPage()
+            let visible = CTFrameGetVisibleStringRange(frame)
+            guard visible.length > 0 else { break }
+            location += visible.length
+        } while location < text.length
         ctx.closePDF()
 
-        NSGraphicsContext.restoreGraphicsState()
-
-        pdfData.write(to: url, atomically: true)
+        try (data as Data).write(to: url, options: .atomic)
     }
 }

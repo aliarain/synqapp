@@ -15,6 +15,8 @@ struct SettingsView: View {
     @State private var apiKey: String = ""
     @State private var showKey = false
     @State private var keyStatus: KeyStatus? = nil
+    @State private var notesPath = FileService.shared.notesDir.path
+    @State private var storageError: String?
 
     enum KeyStatus {
         case saved, testing, valid, failure(String)
@@ -155,6 +157,34 @@ struct SettingsView: View {
                         }
                     }
 
+                    // ── Storage ──────────────────────────────────────────
+                    SettingsSection(title: "Storage", colorScheme: colorScheme) {
+                        VStack(alignment: .leading, spacing: 10) {
+                            Label("Notes folder", systemImage: "folder")
+                                .font(.system(size: 13, weight: .medium))
+                                .foregroundColor(.secondary)
+                            Text(notesPath)
+                                .font(.system(size: 12, design: .monospaced))
+                                .textSelection(.enabled)
+                                .lineLimit(3)
+                            HStack(spacing: 8) {
+                                Button("Change Folder…", action: chooseFolder).controlSize(.small)
+                                Button("Show in Finder") { FileService.shared.openInFinder() }.controlSize(.small)
+                                if !FileService.shared.isUsingDefaultFolder {
+                                    Button("Use Default") { moveNotes { try FileService.shared.resetToDefaultFolder() } }
+                                        .controlSize(.small)
+                                }
+                            }
+                            Text("Entries are plain Markdown files. Pick a folder in iCloud Drive to sync them across your Macs. Existing notes and videos move with you.")
+                                .font(.system(size: 11))
+                                .foregroundColor(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                            if let storageError {
+                                Text(storageError).font(.system(size: 11)).foregroundColor(.red)
+                            }
+                        }
+                    }
+
                     // ── Writing Features ─────────────────────────────────
                     SettingsSection(title: "Writing Features", colorScheme: colorScheme) {
                         VStack(spacing: 0) {
@@ -274,6 +304,28 @@ struct SettingsView: View {
                 .font(.system(size: 12)).foregroundColor(.red)
                 .lineLimit(2)
         }
+    }
+
+    private func chooseFolder() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.canCreateDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.prompt = "Use This Folder"
+        panel.message = "Choose where SynqApp keeps your entries. Your existing notes will be moved there."
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        moveNotes { try FileService.shared.changeFolder(to: url) }
+    }
+
+    private func moveNotes(_ change: () throws -> Void) {
+        do {
+            try change()
+            storageError = nil
+        } catch {
+            storageError = "Couldn't move your notes: \(error.localizedDescription)"
+        }
+        notesPath = FileService.shared.notesDir.path
     }
 
     private func loadKey() {

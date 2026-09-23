@@ -97,13 +97,19 @@ final class AppViewModel: ObservableObject {
         if let first = entries.first {
             open(first)
         } else {
-            // First launch — seed welcome note
+            // Welcome note only once; an emptied journal just gets a fresh page.
+            let seededKey = "hasSeededWelcomeNote"
             do {
-                try fileService.seedWelcomeNoteIfNeeded()
+                if UserDefaults.standard.bool(forKey: seededKey) {
+                    _ = try fileService.createNew()
+                } else {
+                    try fileService.seedWelcomeNote()
+                    UserDefaults.standard.set(true, forKey: seededKey)
+                }
                 entries = fileService.loadAll()
                 if let first = entries.first { open(first) }
             } catch {
-                showError("Could not create welcome note: \(error.localizedDescription)")
+                showError(error.localizedDescription)
             }
         }
     }
@@ -140,7 +146,12 @@ final class AppViewModel: ObservableObject {
     }
 
     func delete(_ entry: JournalEntry) {
-        fileService.delete(entry)
+        do {
+            try fileService.delete(entry)
+        } catch {
+            showError("Couldn't move the entry to the Trash: \(error.localizedDescription)")
+            return
+        }
         entries.removeAll { $0.id == entry.id }
         if activeEntry?.id == entry.id {
             if let next = entries.first { open(next) }
@@ -209,7 +220,7 @@ final class AppViewModel: ObservableObject {
             }
 
             // Save metadata .md
-            let metaURL = fileService.synqDir.appendingPathComponent(filename)
+            let metaURL = fileService.notesDir.appendingPathComponent(filename)
             try "Video Entry".write(to: metaURL, atomically: true, encoding: .utf8)
 
             let entry = JournalEntry(

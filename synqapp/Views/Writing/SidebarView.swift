@@ -12,6 +12,8 @@ struct SidebarView: View {
     @ObservedObject var vm: AppViewModel
     let colorScheme: ColorScheme
 
+    @State private var pendingDelete: JournalEntry?
+
     private var pinned: [JournalEntry] { vm.entries.filter { $0.isPinned } }
     private var unpinned: [JournalEntry] { vm.entries.filter { !$0.isPinned } }
 
@@ -31,7 +33,7 @@ struct SidebarView: View {
                         .foregroundColor(.secondary)
                 }
                 .buttonStyle(.plain)
-                .help("Open in Finder")
+                .help("Show notes folder in Finder")
 
                 // Export all as ZIP
                 Button { exportAllZip() } label: {
@@ -40,7 +42,7 @@ struct SidebarView: View {
                         .foregroundColor(.secondary)
                 }
                 .buttonStyle(.plain)
-                .help("Export all entries as ZIP")
+                .help("Export everything (notes, videos, transcripts) as a ZIP")
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 12)
@@ -71,6 +73,16 @@ struct SidebarView: View {
         }
         .frame(width: 300)
         .background(Color(NSColor.controlBackgroundColor))
+        .confirmationDialog(
+            "Move “\(pendingDelete?.preview ?? "")” to the Trash?",
+            isPresented: Binding(get: { pendingDelete != nil }, set: { if !$0 { pendingDelete = nil } }),
+            presenting: pendingDelete
+        ) { entry in
+            Button("Move to Trash", role: .destructive) { vm.delete(entry) }
+            Button("Cancel", role: .cancel) {}
+        } message: { _ in
+            Text("You can restore it from the Trash in Finder.")
+        }
     }
 
     @ViewBuilder
@@ -95,7 +107,7 @@ struct SidebarView: View {
             isSelected: vm.activeEntry?.id == entry.id,
             colorScheme: colorScheme,
             onSelect: { vm.open(entry) },
-            onDelete: { vm.delete(entry) },
+            onDelete: { pendingDelete = entry },
             onPin: { vm.togglePin(entry) },
             onExportPDF: { exportPDF(entry: entry) },
             onExportMD: { exportMD(entry: entry) },
@@ -111,9 +123,11 @@ struct SidebarView: View {
         panel.nameFieldStringValue = "\(entry.preview).pdf"
         panel.begin { response in
             guard response == .OK, let url = panel.url else { return }
-            PDFExportService.export(entry: entry, to: url,
-                                   fontName: vm.prefs.selectedFont,
-                                   fontSize: vm.prefs.fontSize)
+            run("PDF export") {
+                try PDFExportService.export(entry: entry, to: url,
+                                            fontName: vm.prefs.selectedFont,
+                                            fontSize: vm.prefs.fontSize)
+            }
         }
     }
 
@@ -123,7 +137,7 @@ struct SidebarView: View {
         panel.nameFieldStringValue = "\(entry.preview).md"
         panel.begin { response in
             guard response == .OK, let url = panel.url else { return }
-            try? FileService.shared.exportAsMarkdown(entry, to: url)
+            run("Export") { try FileService.shared.exportAsMarkdown(entry, to: url) }
         }
     }
 
@@ -133,7 +147,16 @@ struct SidebarView: View {
         panel.nameFieldStringValue = "\(entry.preview).txt"
         panel.begin { response in
             guard response == .OK, let url = panel.url else { return }
-            try? FileService.shared.exportAsPlainText(entry, to: url)
+            run("Export") { try FileService.shared.exportAsPlainText(entry, to: url) }
+        }
+    }
+
+    private func run(_ what: String, _ action: () throws -> Void) {
+        do {
+            try action()
+            vm.showInfo("\(what) saved")
+        } catch {
+            vm.showError("\(what) failed: \(error.localizedDescription)")
         }
     }
 
@@ -143,11 +166,7 @@ struct SidebarView: View {
         panel.nameFieldStringValue = "SynqApp-Export.zip"
         panel.begin { response in
             guard response == .OK, let url = panel.url else { return }
-            do {
-                try FileService.shared.exportAllAsZip(entries: vm.entries, to: url)
-            } catch {
-                vm.showError("Export failed: \(error.localizedDescription)")
-            }
+            run("Export") { try FileService.shared.exportAllAsZip(to: url) }
         }
     }
 }

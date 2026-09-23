@@ -91,6 +91,9 @@ struct ContentView: View {
         .onReceive(NotificationCenter.default.publisher(for: .quickCaptureDidSave)) { _ in
             vm.loadEntries()
         }
+        .onReceive(NotificationCenter.default.publisher(for: .notesFolderDidChange)) { _ in
+            vm.loadEntries()
+        }
         // Search overlay
         .overlay {
             if showSearch {
