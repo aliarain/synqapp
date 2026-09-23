@@ -2,6 +2,7 @@
 //  SynqApp — persisted user preferences
 
 import SwiftUI
+import AppKit
 import Combine
 import SynqCore
 
@@ -39,49 +40,66 @@ final class PreferencesService: ObservableObject {
         return AIRequest(provider: provider, model: aiModel(for: provider), apiKey: key, system: system, turns: turns)
     }
 
-    // MARK: - Theme
+    // MARK: - Appearance
 
-    @AppStorage("colorScheme") var colorSchemeRaw: String = "light" {
+    enum Appearance: String, CaseIterable, Identifiable {
+        case system, light, dark
+        var id: String { rawValue }
+        var title: String { rawValue.capitalized }
+    }
+
+    @AppStorage("appearance") private var appearanceRaw: String = Appearance.system.rawValue {
         willSet { objectWillChange.send() }
     }
 
+    var appearance: Appearance {
+        get { Appearance(rawValue: appearanceRaw) ?? .system }
+        set { appearanceRaw = newValue.rawValue }
+    }
+
     var preferredColorScheme: ColorScheme? {
-        switch colorSchemeRaw {
-        case "light": return .light
-        case "dark":  return .dark
-        default:      return nil
+        switch appearance {
+        case .system: return nil
+        case .light:  return .light
+        case .dark:   return .dark
         }
-    }
-
-    var isDark: Bool { colorSchemeRaw == "dark" }
-
-    func toggleTheme() {
-        colorSchemeRaw = isDark ? "light" : "dark"
-    }
-
-    func setTheme(_ scheme: ColorScheme) {
-        colorSchemeRaw = scheme == .dark ? "dark" : "light"
     }
 
     // MARK: - Font
 
-    static let fontSizes: [CGFloat] = [16, 18, 20, 22, 24, 26]
+    /// "System", "Serif" and "Mono" map to the system font designs; anything else is a font family name.
+    static let builtInFonts = ["Serif", "System", "Mono"]
+    static let sizeRange: ClosedRange<Double> = 13...32
 
-    @AppStorage("selectedFont") var selectedFont: String = "Arial" {
+    @AppStorage("editorFont") var selectedFont: String = "Serif" {
         willSet { objectWillChange.send() }
     }
-    @AppStorage("fontSize") var fontSizeIndex: Int = 0 {
+
+    @AppStorage("editorFontSize") var fontSizeValue: Double = 18 {
         willSet { objectWillChange.send() }
     }
 
-    var fontSize: CGFloat { Self.fontSizes[fontSizeIndex] }
+    var fontSize: CGFloat { CGFloat(fontSizeValue) }
 
-    func cycleFontSize() {
-        fontSizeIndex = (fontSizeIndex + 1) % Self.fontSizes.count
+    func adjustFontSize(by delta: Double) {
+        fontSizeValue = min(Self.sizeRange.upperBound, max(Self.sizeRange.lowerBound, fontSizeValue + delta))
     }
 
-    func setFont(_ name: String) {
-        selectedFont = name
+    func editorFont(size: CGFloat? = nil) -> NSFont {
+        let size = size ?? fontSize
+        let base = NSFont.systemFont(ofSize: size)
+        switch selectedFont {
+        case "System": return base
+        case "Serif":  return base.fontDescriptor.withDesign(.serif).flatMap { NSFont(descriptor: $0, size: size) } ?? base
+        case "Mono":   return NSFont.monospacedSystemFont(ofSize: size, weight: .regular)
+        default:       return NSFont(name: selectedFont, size: size) ?? base
+        }
+    }
+
+    // MARK: - Focus timer
+
+    @AppStorage("timerMinutes") var timerMinutes: Int = 15 {
+        willSet { objectWillChange.send() }
     }
 
     // MARK: - Writing mode
@@ -143,12 +161,4 @@ final class PreferencesService: ObservableObject {
         willSet { objectWillChange.send() }
     }
 
-    @AppStorage("lineWidth") private var lineWidthRaw: Double = 650 {
-        willSet { objectWillChange.send() }
-    }
-
-    var lineWidth: CGFloat {
-        get { CGFloat(lineWidthRaw) }
-        set { lineWidthRaw = Double(newValue) }
-    }
 }

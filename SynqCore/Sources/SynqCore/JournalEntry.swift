@@ -59,10 +59,6 @@ public struct JournalEntry: Identifiable, Equatable, Sendable {
         if clean.count <= 30 { return prefix + clean }
         return prefix + String(clean.prefix(30)) + "…"
     }
-
-    public static func == (lhs: JournalEntry, rhs: JournalEntry) -> Bool {
-        lhs.id == rhs.id
-    }
 }
 
 public enum EntryFilename {

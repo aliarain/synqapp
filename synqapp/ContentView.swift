@@ -1,378 +1,260 @@
-
 //  ContentView.swift
-//  SynqApp — root view, mode switcher, keyboard hooks, toast overlay
+//  SynqApp — main window: sidebar, editor or Reflect, toolbar
 
 import SwiftUI
-import Combine
 import SynqCore
 
 struct ContentView: View {
 
-    @StateObject private var vm = AppViewModel()
-    @Environment(\.colorScheme) private var systemColorScheme
+    @ObservedObject var vm: AppViewModel
+    @State private var visibilityBeforeZen: NavigationSplitViewVisibility?
 
-    // Timer
-    @State private var timerRunning = false
-    @State private var timerSeconds = 900
-    @State private var timerTotal = 900
-
-    // Bottom bar fade
-    @State private var bottomNavOpacity: Double = 1.0
-    @State private var isHoveringBar = false
-
-    // Dictation
-    @State private var isDictating = false
-
-    // Typing idle
-    @State private var idleTask: DispatchWorkItem?
-
-    // Video recording
-    @State private var showingVideoRecording = false
-    @State private var isPreparingVideo = false
-    @State private var preparedCameraManager: CameraManager?
-    @State private var showingPermissionAlert = false
-    @State private var permissionMessage = ""
-
-    // Onboarding
-    @State private var showOnboarding = false
-
-    // Search
-    @State private var showSearch = false
-
-    // Reading view
-    @State private var isReadingMode = false
-
-    private var colorScheme: ColorScheme {
-        vm.prefs.preferredColorScheme ?? systemColorScheme
-    }
+    private var prefs: PreferencesService { vm.prefs }
 
     var body: some View {
-        ZStack(alignment: .bottom) {
+        NavigationSplitView(columnVisibility: $vm.columnVisibility) {
+            SidebarView(vm: vm)
+                .navigationSplitViewColumnWidth(min: 240, ideal: 290, max: 420)
+        } detail: {
             Group {
                 switch vm.mode {
-                case .writing:
-                    writingView
-                case .reflectionSelection:
-                    ReflectionSelectionView(vm: vm, colorScheme: colorScheme)
-                        .frame(minWidth: 720, minHeight: 500)
-                case .voiceAgent(let context):
-                    VoiceAgentView(vm: vm, context: context, colorScheme: colorScheme)
-                        .frame(minWidth: 720, minHeight: 500)
+                case .writing: EditorScreen(vm: vm)
+                case .reflect: ReflectView(vm: vm)
                 }
             }
-
-            // Toast
+            .toolbar { toolbar }
+        }
+        .navigationTitle(windowTitle)
+        .navigationSubtitle(windowSubtitle)
+        .toolbar(vm.isZen ? .hidden : .automatic, for: .windowToolbar)
+        .frame(minWidth: 720, minHeight: 480)
+        .preferredColorScheme(prefs.preferredColorScheme)
+        .onChange(of: prefs.writingMode) { _, mode in updateZen(mode == .zen) }
+        .overlay(alignment: .bottom) {
             if let toast = vm.toast {
-                ToastView(toast: toast) { vm.toast = nil }
-                    .padding(.bottom, 80)
-                    .padding(.horizontal, 20)
-                    .animation(.spring(), value: vm.toast?.id)
+                ToastView(toast: toast) { withAnimation { vm.toast = nil } }
+                    .padding(.bottom, 44)
             }
         }
-        .preferredColorScheme(vm.prefs.preferredColorScheme)
-        .onReceive(Timer.publish(every: 1, on: .main, in: .common).autoconnect()) { _ in
-            tickTimer()
-        }
-        .sheet(isPresented: $vm.showSettings) {
-            SettingsView(colorScheme: colorScheme)
-        }
-        // Onboarding — one time only
-        .sheet(isPresented: $showOnboarding) {
-            OnboardingView(prefs: vm.prefs) { showOnboarding = false }
-        }
-        .onAppear {
-            if !vm.prefs.hasCompletedOnboarding {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                    showOnboarding = true
-                }
-            }
-        }
-        // Reload entries when quick capture saves
-        .onReceive(NotificationCenter.default.publisher(for: .quickCaptureDidSave)) { _ in
-            vm.loadEntries()
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .notesFolderDidChange)) { _ in
-            vm.loadEntries()
-        }
-        // Search overlay
         .overlay {
-            if showSearch {
-                SearchView(
-                    isPresented: $showSearch,
-                    entries: vm.entries,
-                    colorScheme: colorScheme
-                ) { entry in
-                    vm.open(entry)
+            if vm.isRecordingVideo, let manager = vm.cameraManager {
+                VideoRecordingView(manager: manager) { url, transcript in
+                    vm.finishVideoRecording(url: url, transcript: transcript)
                 }
-                .transition(.opacity)
-                .zIndex(20)
-            }
-        }
-        // Video recording overlay
-        .overlay {
-            if showingVideoRecording {
-                VideoRecordingView(
-                    isPresented: $showingVideoRecording,
-                    cameraManager: preparedCameraManager
-                ) { url, transcript in
-                    vm.saveVideoEntry(from: url, transcript: transcript)
-                    showingVideoRecording = false
-                    preparedCameraManager = nil
-                }
-                .zIndex(10)
                 .transition(.opacity)
             }
         }
-        .alert("Permission Required", isPresented: $showingPermissionAlert) {
-            Button("Open Settings") {
-                if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Camera") {
-                    NSWorkspace.shared.open(url)
-                }
+        .sheet(isPresented: $vm.showOnboarding) {
+            OnboardingView {
+                prefs.hasCompletedOnboarding = true
+                vm.showOnboarding = false
+            }
+        }
+        .alert("Camera Access Needed", isPresented: Binding(
+            get: { vm.permissionMessage != nil },
+            set: { if !$0 { vm.permissionMessage = nil } }
+        )) {
+            Button("Open System Settings") {
+                NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Camera")!)
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text(permissionMessage)
+            Text(vm.permissionMessage ?? "")
         }
     }
 
-    // MARK: - Writing view
+    private var windowTitle: String {
+        if vm.mode == .reflect { return "Reflect" }
+        guard let entry = vm.activeEntry else { return "SynqApp" }
+        let firstLine = vm.editorText.split(separator: "\n").first.map(String.init) ?? ""
+        let title = firstLine.replacingOccurrences(of: #"^#{1,6}\s+"#, with: "", options: .regularExpression)
+            .trimmingCharacters(in: .whitespaces)
+        if entry.entryType == .video { return entry.preview }
+        return title.isEmpty ? "New Entry" : String(title.prefix(60))
+    }
 
-    @ViewBuilder
-    private var writingView: some View {
-        HStack(spacing: 0) {
-            // Sidebar
-            if vm.sidebarVisible {
-                SidebarView(vm: vm, colorScheme: colorScheme)
-                    .transition(.move(edge: .leading))
-                Divider()
+    private var windowSubtitle: String {
+        guard vm.mode == .writing, let entry = vm.activeEntry else { return "" }
+        return entry.createdAt.formatted(date: .complete, time: .shortened)
+    }
+
+    private func updateZen(_ entering: Bool) {
+        withAnimation {
+            if entering {
+                visibilityBeforeZen = vm.columnVisibility
+                vm.columnVisibility = .detailOnly
+            } else if let previous = visibilityBeforeZen {
+                vm.columnVisibility = previous
+                visibilityBeforeZen = nil
             }
+        }
+    }
 
-            // Editor + bottom bar
-            ZStack(alignment: .bottom) {
-                // Video player or text editor or reading view
-                if let videoURL = vm.currentVideoURL {
-                    VideoPlayerView(videoURL: videoURL)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                } else if isReadingMode {
-                    ReadingView(
-                        text: vm.editorText,
-                        font: vm.prefs.selectedFont,
-                        fontSize: vm.prefs.fontSize,
-                        colorScheme: colorScheme,
-                        onExit: { withAnimation { isReadingMode = false } }
-                    )
+    // MARK: - Toolbar
+
+    @ToolbarContentBuilder
+    private var toolbar: some ToolbarContent {
+        if vm.mode == .writing {
+            ToolbarItemGroup(placement: .primaryAction) {
+                Menu {
+                    Picker("Writing Mode", selection: Binding(get: { prefs.writingMode }, set: { prefs.writingMode = $0 })) {
+                        ForEach(WritingMode.allCases) { mode in
+                            Label(mode.label, systemImage: mode.icon).tag(mode)
+                        }
+                    }
+                    .pickerStyle(.inline)
+                } label: {
+                    Label(prefs.writingMode.label, systemImage: prefs.writingMode.icon)
+                }
+                .help("Writing mode")
+
+                Menu {
+                    Button(vm.timer.isRunning ? "Pause" : "Start") { vm.timer.toggle() }
+                    Button("Reset") { vm.timer.reset() }
+                    Divider()
+                    ForEach([5, 10, 15, 25, 45], id: \.self) { minutes in
+                        Button("\(minutes) minutes") { vm.timer.reset(minutes: minutes); vm.timer.start() }
+                    }
+                } label: {
+                    Label(vm.timer.label, systemImage: vm.timer.isRunning ? "timer" : "timer")
+                        .labelStyle(.titleAndIcon)
+                        .monospacedDigit()
+                } primaryAction: {
+                    vm.timer.toggle()
+                }
+                .help("Focus timer: click to start or pause")
+
+                Toggle(isOn: $vm.isReadingMode) {
+                    Label("Reading View", systemImage: "book")
+                }
+                .help("Reading view (⌘R)")
+                .disabled(vm.currentVideoURL != nil)
+
+                Button(action: vm.startVideoRecording) {
+                    Label("Record Video", systemImage: "video")
+                }
+                .help("Record a video entry")
+
+                ShareMenu(vm: vm)
+
+                Button(action: vm.startReflection) {
+                    Label("Reflect", systemImage: "bubble.left.and.text.bubble.right")
+                }
+                .help("Talk it through with AI (⇧⌘R)")
+            }
+        }
+    }
+}
+
+// MARK: - Editor screen
+
+struct EditorScreen: View {
+    @ObservedObject var vm: AppViewModel
+    private var prefs: PreferencesService { vm.prefs }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            Group {
+                if let url = vm.currentVideoURL, let entry = vm.activeEntry {
+                    VideoEntryView(url: url, transcript: entry.transcript)
+                } else if vm.isReadingMode {
+                    ReadingView(text: vm.editorText, font: prefs.editorFont())
                 } else {
-                    TextEditorView(
+                    WritingTextView(
                         text: $vm.editorText,
                         placeholder: vm.placeholder,
-                        font: vm.prefs.selectedFont,
-                        fontSize: vm.prefs.fontSize,
-                        backspaceLocked: vm.prefs.backspaceLocked,
-                        colorScheme: colorScheme,
-                        writingMode: vm.prefs.writingMode
+                        font: prefs.editorFont(),
+                        mode: prefs.writingMode,
+                        backspaceLocked: prefs.backspaceLocked,
+                        onEscape: prefs.writingMode == .zen ? { prefs.writingMode = .flow } : nil
                     )
-                    .onChange(of: vm.editorText) { _ in handleTextChange() }
-                }
-
-                // Bottom bar — hidden in Zen unless hovering
-                if vm.prefs.writingMode != .zen || isHoveringBar {
-                    BottomBarView(
-                        vm: vm,
-                        prefs: vm.prefs,
-                        timerRunning: $timerRunning,
-                        timerSeconds: $timerSeconds,
-                        timerTotal: $timerTotal,
-                        isDictating: $isDictating,
-                        onStartVideo: startVideoRecording,
-                        onPrompt: { prompt in
-                            let prefix = vm.editorText.isEmpty ? "" : vm.editorText + "\n\n"
-                            vm.editorText = prefix + prompt + "\n"
-                        },
-                        onReadingToggle: { withAnimation { isReadingMode.toggle() } },
-                        colorScheme: colorScheme
-                    )
-                    .opacity(bottomNavOpacity)
-                    .animation(.easeInOut(duration: 1.0), value: bottomNavOpacity)
-                    .onHover { hovering in
-                        isHoveringBar = hovering
-                        updateBarOpacity()
-                    }
-                    .transition(.move(edge: .bottom).combined(with: .opacity))
                 }
             }
-        }
-        .frame(minWidth: vm.sidebarVisible ? 1020 : 720, minHeight: 500)
-        .background(
-            colorScheme == .dark
-                ? Color(red: 0.08, green: 0.08, blue: 0.08)
-                : Color(red: 0.992, green: 0.992, blue: 0.992)
-        )
-        .keyboardShortcuts(
-            backspaceLocked: vm.prefs.backspaceLocked,
-            writingMode: vm.prefs.writingMode,
-            onModeChange: { vm.prefs.writingMode = $0 },
-            onZenExit: {
-                if vm.prefs.writingMode == .zen { vm.prefs.writingMode = .flow }
-            },
-            onSearch: { withAnimation { showSearch = true } },
-            onReadingToggle: { withAnimation { isReadingMode.toggle() } }
-        )
-        // Zen mode hides the bottom bar entirely
-        .onChange(of: vm.prefs.writingMode) { mode in
-            if mode == .zen {
-                withAnimation(.easeInOut(duration: 0.5)) { bottomNavOpacity = 0 }
-            } else {
-                withAnimation(.easeInOut(duration: 0.3)) { bottomNavOpacity = 1 }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+            if !vm.isZen {
+                Divider()
+                StatusBar(vm: vm)
             }
         }
-    }
-
-    // MARK: - Timer
-
-    private func tickTimer() {
-        guard timerRunning else { return }
-        if timerSeconds > 0 {
-            timerSeconds -= 1
-        } else {
-            timerRunning = false
-            timerSeconds = timerTotal
-            withAnimation(.easeInOut(duration: 1.0)) { bottomNavOpacity = 1.0 }
-        }
-        updateBarOpacity()
-    }
-
-    private func updateBarOpacity() {
-        if isHoveringBar || !timerRunning {
-            withAnimation(.easeInOut(duration: 0.3)) { bottomNavOpacity = 1.0 }
-        } else {
-            withAnimation(.easeInOut(duration: 1.0)) { bottomNavOpacity = 0.0 }
-        }
-    }
-
-    // MARK: - Typing idle
-
-    private func handleTextChange() {
-        idleTask?.cancel()
-        let task = DispatchWorkItem {
-            if timerRunning { timerRunning = false }
-        }
-        idleTask = task
-        DispatchQueue.main.asyncAfter(deadline: .now() + 3, execute: task)
-    }
-
-    // MARK: - Video recording
-
-    private func startVideoRecording() {
-        guard !isPreparingVideo else { return }
-        isPreparingVideo = true
-
-        let manager = CameraManager()
-        manager.onReadyToRecord = {
-            DispatchQueue.main.async {
-                preparedCameraManager = manager
-                isPreparingVideo = false
-                withAnimation { showingVideoRecording = true }
-            }
-        }
-        manager.onCannotRecord = {
-            DispatchQueue.main.async {
-                isPreparingVideo = false
-                permissionMessage = "SynqApp needs camera and microphone access to record video entries. Please enable them in System Settings."
-                showingPermissionAlert = true
-            }
-        }
-        manager.checkPermissions()
-        preparedCameraManager = manager
+        .background(Color(nsColor: .textBackgroundColor))
     }
 }
 
-// MARK: - Keyboard shortcut monitor (ViewModifier)
-// NSEvent.addLocalMonitorForEvents intercepts before NSTextView gets it
+// MARK: - Status bar
 
-struct KeyboardShortcutMonitor: ViewModifier {
-    let backspaceLocked: Bool
-    let writingMode: WritingMode
-    let onModeChange: (WritingMode) -> Void
-    let onZenExit: () -> Void
-    let onSearch: () -> Void
-    let onReadingToggle: () -> Void
+struct StatusBar: View {
+    @ObservedObject var vm: AppViewModel
+    private var prefs: PreferencesService { vm.prefs }
 
-    @State private var monitor: Any? = nil
-
-    func body(content: Content) -> some View {
-        content
-            .onAppear { install() }
-            .onDisappear { remove() }
-            .onChange(of: backspaceLocked) { _ in reinstall() }
-            .onChange(of: writingMode.rawValue) { _ in reinstall() }
-    }
-
-    private func install() {
-        remove()
-        monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
-            if event.modifierFlags.contains(.command) &&
-               !event.modifierFlags.contains(.shift) &&
-               !event.modifierFlags.contains(.option) {
-                switch event.charactersIgnoringModifiers {
-                case "1": DispatchQueue.main.async { self.onModeChange(.flow) };       return nil
-                case "2": DispatchQueue.main.async { self.onModeChange(.focus) };      return nil
-                case "3": DispatchQueue.main.async { self.onModeChange(.typewriter) }; return nil
-                case "4": DispatchQueue.main.async { self.onModeChange(.zen) };        return nil
-                case "f": DispatchQueue.main.async { self.onSearch() };                return nil
-                case "r": DispatchQueue.main.async { self.onReadingToggle() };         return nil
-                default: break
+    var body: some View {
+        HStack(spacing: 14) {
+            if vm.activeEntry?.entryType != .video {
+                if prefs.showWordCount { Text(Stats.wordCountLabel(vm.editorText)) }
+                if prefs.showReadingTime, !vm.editorText.isEmpty { Text(Stats.readingTimeLabel(vm.editorText)) }
+            }
+            if prefs.showStreak {
+                let streak = Stats.currentStreak(entries: vm.entries)
+                if streak > 0 {
+                    Label("\(streak)-day streak", systemImage: "flame.fill")
+                        .symbolRenderingMode(.multicolor)
                 }
             }
-
-            if event.keyCode == 53 {
-                if let window = NSApp.keyWindow, window.styleMask.contains(.fullScreen) {
-                    DispatchQueue.main.async { window.toggleFullScreen(nil) }
-                    return nil
+            if prefs.hasDailyGoal {
+                let today = Stats.todayWordCount(entries: vm.entries)
+                HStack(spacing: 6) {
+                    ProgressView(value: Stats.goalProgress(todayWords: today, goal: prefs.dailyWordGoal))
+                        .progressViewStyle(.linear)
+                        .frame(width: 60)
+                    Text(Stats.goalLabel(todayWords: today, goal: prefs.dailyWordGoal))
                 }
-                var shouldConsume = false
-                if Thread.isMainThread {
-                    shouldConsume = self.writingMode == .zen
-                } else {
-                    DispatchQueue.main.sync { shouldConsume = self.writingMode == .zen }
-                }
-                if shouldConsume {
-                    DispatchQueue.main.async { self.onZenExit() }
-                    return nil
-                }
-                return event
+                .help("Daily goal: \(prefs.dailyWordGoal) words")
             }
 
-            if self.backspaceLocked && (event.keyCode == 51 || event.keyCode == 117) {
-                return nil
-            }
+            Spacer()
 
-            return event
+            if vm.isWritingRecap {
+                HStack(spacing: 6) {
+                    ProgressView().controlSize(.mini)
+                    Text("Writing your weekly recap…")
+                }
+            }
+            if prefs.backspaceLocked {
+                Label("Backspace locked", systemImage: "lock.fill")
+            }
+            Text(prefs.writingMode.label)
         }
+        .font(.caption)
+        .foregroundStyle(.secondary)
+        .labelStyle(.titleAndIcon)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 6)
+        .background(.bar)
     }
-
-    private func remove() {
-        if let m = monitor { NSEvent.removeMonitor(m); monitor = nil }
-    }
-
-    private func reinstall() { install() }
 }
 
-extension View {
-    func keyboardShortcuts(
-        backspaceLocked: Bool,
-        writingMode: WritingMode,
-        onModeChange: @escaping (WritingMode) -> Void,
-        onZenExit: @escaping () -> Void,
-        onSearch: @escaping () -> Void,
-        onReadingToggle: @escaping () -> Void
-    ) -> some View {
-        modifier(KeyboardShortcutMonitor(
-            backspaceLocked: backspaceLocked,
-            writingMode: writingMode,
-            onModeChange: onModeChange,
-            onZenExit: onZenExit,
-            onSearch: onSearch,
-            onReadingToggle: onReadingToggle
-        ))
+// MARK: - Video entry
+
+struct VideoEntryView: View {
+    let url: URL
+    let transcript: String?
+
+    var body: some View {
+        VSplitView {
+            VideoPlayerView(videoURL: url)
+                .frame(minHeight: 240)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Transcript").font(.headline)
+                    Text(transcript ?? "No transcript for this video. Allow Speech Recognition for SynqApp in System Settings → Privacy & Security, then record again.")
+                        .foregroundStyle(transcript == nil ? .secondary : .primary)
+                        .textSelection(.enabled)
+                }
+                .frame(maxWidth: 680, alignment: .leading)
+                .padding(24)
+                .frame(maxWidth: .infinity)
+            }
+            .frame(minHeight: 120)
+        }
     }
 }

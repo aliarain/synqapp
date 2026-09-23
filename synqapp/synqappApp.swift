@@ -1,4 +1,3 @@
-
 //  synqappApp.swift
 //  SynqApp
 
@@ -9,41 +8,107 @@ import SynqCore
 struct SynqApp: App {
 
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
+    @StateObject private var vm = AppViewModel()
     @AppStorage("showMenuBarIcon") private var showMenuBarIcon = true
 
     var body: some Scene {
-        WindowGroup(id: "main") {
-            ContentView()
+        Window("SynqApp", id: "main") {
+            ContentView(vm: vm)
         }
-        .windowStyle(.titleBar)
-        .defaultSize(width: 1100, height: 680)
+        .defaultSize(width: 1100, height: 720)
+        .commands { SynqCommands(vm: vm, appDelegate: appDelegate) }
 
-        MenuBarExtra("SynqApp", systemImage: "pencil.line", isInserted: $showMenuBarIcon) {
+        Settings {
+            SettingsView()
+        }
+
+        MenuBarExtra("SynqApp", systemImage: "book.closed", isInserted: $showMenuBarIcon) {
             MenuBarContent(appDelegate: appDelegate)
         }
     }
 }
 
-// MARK: - Menu bar
+// MARK: - Menu bar extra
 
 struct MenuBarContent: View {
     let appDelegate: AppDelegate
     @Environment(\.openWindow) private var openWindow
 
     var body: some View {
-        Button("Quick Note") { appDelegate.showQuickCapture() }
-            .keyboardShortcut(.space, modifiers: .option)
+        Button("New Quick Note") { appDelegate.showQuickCapture() }
         Button("Open SynqApp") {
-            if let window = NSApp.windows.first(where: { $0.frameAutosaveName == "SynqAppMain" }) {
-                window.makeKeyAndOrderFront(nil)
-            } else {
-                openWindow(id: "main")
-            }
+            openWindow(id: "main")
             NSApp.activate(ignoringOtherApps: true)
         }
         Divider()
+        SettingsLink { Text("Settings…") }
         Button("Quit SynqApp") { NSApp.terminate(nil) }
-            .keyboardShortcut("q")
+    }
+}
+
+// MARK: - Menu commands
+
+struct SynqCommands: Commands {
+    @ObservedObject var vm: AppViewModel
+    let appDelegate: AppDelegate
+
+    private var prefs: PreferencesService { vm.prefs }
+
+    var body: some Commands {
+        CommandGroup(replacing: .newItem) {
+            Button("New Entry") { vm.newEntry() }
+                .keyboardShortcut("n")
+            Button("New Quick Note") { appDelegate.showQuickCapture() }
+            Button("Record Video Entry") { vm.startVideoRecording() }
+                .keyboardShortcut("v", modifiers: [.command, .shift])
+        }
+        CommandGroup(after: .saveItem) {
+            Menu("Export") {
+                if let entry = vm.activeEntry {
+                    Button("Entry as PDF…") { EntryExporter.exportPDF(entry, vm: vm) }
+                    Button("Entry as Markdown…") { EntryExporter.exportMarkdown(entry, vm: vm) }
+                    Button("Entry as Plain Text…") { EntryExporter.exportPlainText(entry, vm: vm) }
+                    Divider()
+                }
+                Button("Entire Journal as ZIP…") { EntryExporter.exportEverything(vm: vm) }
+            }
+            Button("Show Notes Folder in Finder") { vm.openFolder() }
+        }
+
+        CommandMenu("Writing") {
+            Picker("Mode", selection: Binding(get: { prefs.writingMode }, set: { prefs.writingMode = $0 })) {
+                ForEach(Array(WritingMode.allCases.enumerated()), id: \.element) { index, mode in
+                    Text(mode.label).tag(mode)
+                        .keyboardShortcut(KeyEquivalent(Character("\(index + 1)")), modifiers: .command)
+                }
+            }
+            .pickerStyle(.inline)
+            Divider()
+            Button(vm.isReadingMode ? "Edit Entry" : "Reading View") { vm.isReadingMode.toggle() }
+                .keyboardShortcut("r")
+            Toggle("Lock Backspace", isOn: Binding(get: { prefs.backspaceLocked }, set: { prefs.backspaceLocked = $0 }))
+                .keyboardShortcut("l", modifiers: [.command, .shift])
+            Button("Insert Writing Prompt") { vm.insertPrompt() }
+                .keyboardShortcut("p", modifiers: [.command, .shift])
+            Divider()
+            Button("Bigger") { prefs.adjustFontSize(by: 1) }
+                .keyboardShortcut("+")
+            Button("Smaller") { prefs.adjustFontSize(by: -1) }
+                .keyboardShortcut("-")
+            Button("Choose Font…") { FontPanel.show() }
+            Divider()
+            Button(vm.timer.isRunning ? "Pause Focus Timer" : "Start Focus Timer") { vm.timer.toggle() }
+                .keyboardShortcut("t", modifiers: [.command, .option])
+        }
+
+        CommandMenu("Reflect") {
+            Button("Reflect…") { vm.startReflection() }
+                .keyboardShortcut("r", modifiers: [.command, .shift])
+            Button("Write This Week's Recap") { vm.writeWeeklyRecap() }
+            Divider()
+            Button("Open in ChatGPT") { ChatHandoff.open(.chatGPT, text: vm.chatSourceText, vm: vm) }
+            Button("Open in Claude") { ChatHandoff.open(.claude, text: vm.chatSourceText, vm: vm) }
+        }
     }
 }
 
@@ -55,15 +120,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var quickCaptureHost: NSHostingController<QuickCaptureWindowWrapper>?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        if let window = NSApp.windows.first {
-            window.center()
-            window.setFrameAutosaveName("SynqAppMain")
-            window.title = "SynqApp"
-            // Center the title in the toolbar
-            window.titleVisibility = .visible
-            window.toolbar = nil   // remove toolbar so title sits centered in titlebar
-        }
-
         // Start global hotkey
         HotKeyService.shared.onTrigger = { [weak self] in
             self?.showQuickCapture()
@@ -120,10 +176,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             var entry = try FileService.shared.createNew()
             entry.body = text
             try FileService.shared.save(entry)
-            // Post notification so ContentView can reload entries
             NotificationCenter.default.post(name: .quickCaptureDidSave, object: nil)
         } catch {
-            print("[QuickCapture] Save failed: \(error)")
+            NSAlert(error: error).runModal()
         }
     }
 }
@@ -144,6 +199,6 @@ struct QuickCaptureWindowWrapper: View {
 
     var body: some View {
         QuickCaptureView(isPresented: $isPresented, onSave: onSave)
-            .onChange(of: isPresented) { if !$0 { onDismiss() } }
+            .onChange(of: isPresented) { _, presented in if !presented { onDismiss() } }
     }
 }

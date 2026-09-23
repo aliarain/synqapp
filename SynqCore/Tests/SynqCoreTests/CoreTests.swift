@@ -310,3 +310,13 @@ final class StubProtocol: URLProtocol, @unchecked Sendable {
         #expect(Timeline.filter([a, b], tags: []).count == 2)
     }
 }
+
+@Suite struct EntryEqualityTests {
+    @Test func editedEntryIsNotEqualToItsOldSelf() {
+        let original = entry("before", on: day(1))
+        var edited = original
+        edited.body = "after"
+        // Lists diff rows by equality; id-only equality left edited titles stale in the sidebar.
+        #expect(original != edited)
+    }
+}

@@ -210,6 +210,7 @@ final class FileService {
         try fm.trashItem(at: url, resultingItemURL: nil)
     }
 
+    @discardableResult
     func createNew(body: String = "") throws -> JournalEntry {
         let id = UUID()
         let now = Date()

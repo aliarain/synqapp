@@ -1,16 +1,6 @@
 
 //  VideoRecordingView.swift
-//  SynqApp — camera recording with post-recording speech transcription
-//
-//  IMPORTANT: Add synqapp.entitlements to your Xcode target (Signing & Capabilities):
-//    com.apple.security.device.camera
-//    com.apple.security.device.microphone
-//    com.apple.security.personal-information.speech-recognition
-//
-//  Also set in target Build Settings → Info:
-//    NSCameraUsageDescription
-//    NSMicrophoneUsageDescription
-//    NSSpeechRecognitionUsageDescription
+//  SynqApp — camera recording with on-device speech transcription afterwards
 
 import SwiftUI
 import AVFoundation
@@ -64,6 +54,11 @@ final class CameraManager: NSObject, ObservableObject {
             microphonePermissionGranted = (micStatus == .authorized)
         }
 
+        if SFSpeechRecognizer.authorizationStatus() == .notDetermined {
+            group.enter()
+            SFSpeechRecognizer.requestAuthorization { _ in group.leave() }
+        }
+
         group.notify(queue: .main) { [weak self] in
             guard let self else { return }
             if self.permissionGranted && self.microphonePermissionGranted {
@@ -85,7 +80,8 @@ final class CameraManager: NSObject, ObservableObject {
 
             // Video input
             guard
-                let camera = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .front),
+                let camera = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .front)
+                    ?? AVCaptureDevice.default(for: .video),
                 let videoInput = try? AVCaptureDeviceInput(device: camera),
                 self.session.canAddInput(videoInput)
             else {
@@ -155,10 +151,15 @@ final class CameraManager: NSObject, ObservableObject {
             completion(nil)
             return
         }
-        let recognizer = SFSpeechRecognizer(locale: Locale.current)
+        guard let recognizer = SFSpeechRecognizer(locale: Locale.current) ?? SFSpeechRecognizer(locale: Locale(identifier: "en-US")),
+              recognizer.isAvailable else {
+            completion(nil)
+            return
+        }
         let request = SFSpeechURLRecognitionRequest(url: url)
         request.shouldReportPartialResults = false
-        recognizer?.recognitionTask(with: request) { result, error in
+        if recognizer.supportsOnDeviceRecognition { request.requiresOnDeviceRecognition = true }
+        recognizer.recognitionTask(with: request) { result, error in
             if let result, result.isFinal {
                 completion(result.bestTranscription.formattedString)
             } else if error != nil {
@@ -171,16 +172,16 @@ final class CameraManager: NSObject, ObservableObject {
 // MARK: - AVCaptureFileOutputRecordingDelegate
 
 extension CameraManager: AVCaptureFileOutputRecordingDelegate {
-    func fileOutput(
+    nonisolated func fileOutput(
         _ output: AVCaptureFileOutput,
         didFinishRecordingTo outputFileURL: URL,
         from connections: [AVCaptureConnection],
         error: Error?
     ) {
-        // Transcribe after recording — no audio hardware conflict
-        transcribe(url: outputFileURL) { [weak self] transcript in
-            DispatchQueue.main.async {
-                self?.onFinished?(outputFileURL, transcript)
+        // Transcribe the saved file afterwards so recognition never competes with the capture session for audio.
+        DispatchQueue.main.async { [weak self] in
+            self?.transcribe(url: outputFileURL) { transcript in
+                DispatchQueue.main.async { self?.onFinished?(outputFileURL, transcript) }
             }
         }
     }
@@ -190,24 +191,12 @@ extension CameraManager: AVCaptureFileOutputRecordingDelegate {
 
 struct VideoRecordingView: View {
 
-    @Binding var isPresented: Bool
-    var cameraManager: CameraManager?
-    var onSave: (URL, String?) -> Void
+    @ObservedObject var manager: CameraManager
+    var onFinish: (URL?, String?) -> Void
 
-    @StateObject private var manager: CameraManager
     @State private var countdown: Int? = nil
     @State private var countdownTimer: Timer?
-
-    init(
-        isPresented: Binding<Bool>,
-        cameraManager: CameraManager?,
-        onSave: @escaping (URL, String?) -> Void
-    ) {
-        _isPresented = isPresented
-        self.cameraManager = cameraManager
-        self.onSave = onSave
-        _manager = StateObject(wrappedValue: cameraManager ?? CameraManager())
-    }
+    @State private var isTranscribing = false
 
     var body: some View {
         ZStack {
@@ -240,7 +229,7 @@ struct VideoRecordingView: View {
                     Button {
                         countdownTimer?.invalidate()
                         manager.stopSession()
-                        isPresented = false
+                        onFinish(nil, nil)
                     } label: {
                         Image(systemName: "xmark")
                             .font(.system(size: 16, weight: .semibold))
@@ -272,6 +261,7 @@ struct VideoRecordingView: View {
                 // Record / stop button
                 Button {
                     if manager.isRecording {
+                        isTranscribing = true
                         manager.stopRecording()
                     } else {
                         startCountdown()
@@ -297,11 +287,20 @@ struct VideoRecordingView: View {
                 .disabled(countdown != nil)
             }
         }
+        .overlay {
+            if isTranscribing {
+                VStack(spacing: 10) {
+                    ProgressView()
+                    Text("Transcribing…").foregroundStyle(.white)
+                }
+                .padding(24)
+                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 14))
+            }
+        }
         .onAppear {
             manager.onFinished = { [weak manager] url, transcript in
                 manager?.stopSession()
-                isPresented = false
-                onSave(url, transcript)
+                onFinish(url, transcript)
             }
         }
     }

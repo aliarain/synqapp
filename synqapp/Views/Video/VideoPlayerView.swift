@@ -14,14 +14,13 @@ struct VideoPlayerView: NSViewRepresentable {
         let view = AVPlayerView()
         view.player = player
         view.controlsStyle = .floating
-        player.play()
         return view
     }
 
     func updateNSView(_ nsView: AVPlayerView, context: Context) {
-        if nsView.player?.currentItem?.asset != AVURLAsset(url: videoURL) {
+        // Comparing a fresh AVURLAsset by identity was always unequal, so every SwiftUI update restarted the video.
+        if (nsView.player?.currentItem?.asset as? AVURLAsset)?.url != videoURL {
             nsView.player = AVPlayer(url: videoURL)
-            nsView.player?.play()
         }
     }
 }

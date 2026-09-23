@@ -10,14 +10,13 @@ enum PDFExportService {
     /// Lays the whole entry out with Core Text, wrapping long paragraphs and flowing onto as many
     /// US Letter pages as needed. (Laying out one line box per paragraph silently dropped any
     /// paragraph longer than a single line.)
-    static func export(entry: JournalEntry, to url: URL, fontName: String, fontSize: CGFloat) throws {
+    static func export(entry: JournalEntry, to url: URL, font: NSFont) throws {
         let pageRect = CGRect(x: 0, y: 0, width: 612, height: 792)
         let textRect = pageRect.insetBy(dx: 72, dy: 72)
 
-        let font = NSFont(name: fontName, size: fontSize) ?? NSFont.systemFont(ofSize: fontSize)
         let paragraph = NSMutableParagraphStyle()
-        paragraph.lineSpacing = fontSize * 0.3
-        paragraph.paragraphSpacing = fontSize * 0.5
+        paragraph.lineSpacing = font.pointSize * 0.3
+        paragraph.paragraphSpacing = font.pointSize * 0.5
         let text = NSAttributedString(string: entry.content, attributes: [
             .font: font,
             .foregroundColor: NSColor.black,

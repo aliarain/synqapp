@@ -1,448 +1,283 @@
-
 //  SettingsView.swift
-//  SynqApp — API key configuration, model selection, voice backend
+//  SynqApp — the Settings window (⌘,)
 
 import SwiftUI
+import AppKit
 import SynqCore
 
 struct SettingsView: View {
+    var body: some View {
+        TabView {
+            GeneralSettings()
+                .tabItem { Label("General", systemImage: "gearshape") }
+            WritingSettings()
+                .tabItem { Label("Writing", systemImage: "character.cursor.ibeam") }
+            AISettings()
+                .tabItem { Label("AI", systemImage: "sparkles") }
+            StorageSettings()
+                .tabItem { Label("Storage", systemImage: "externaldrive") }
+        }
+        .frame(width: 520)
+    }
+}
 
-    let colorScheme: ColorScheme
-    @Environment(\.dismiss) private var dismiss
+// MARK: - General
 
+private struct GeneralSettings: View {
     @ObservedObject private var prefs = PreferencesService.shared
-
-    @State private var apiKey: String = ""
-    @State private var showKey = false
-    @State private var keyStatus: KeyStatus? = nil
-    @State private var notesPath = FileService.shared.notesDir.path
-    @State private var storageError: String?
     @AppStorage("showMenuBarIcon") private var showMenuBarIcon = true
 
-    enum KeyStatus {
-        case saved, testing, valid, failure(String)
-    }
-
-    private var provider: AIProvider { prefs.aiProvider }
-
-    private var bg: Color {
-        colorScheme == .dark
-            ? Color(red: 0.08, green: 0.08, blue: 0.08)
-            : Color(red: 0.992, green: 0.992, blue: 0.992)
-    }
-
-    private var cardBg: Color {
-        colorScheme == .dark ? Color(white: 0.12) : Color(white: 0.96)
-    }
-
     var body: some View {
-        ZStack {
-            bg.ignoresSafeArea()
+        Form {
+            Picker("Appearance", selection: Binding(get: { prefs.appearance }, set: { prefs.appearance = $0 })) {
+                ForEach(PreferencesService.Appearance.allCases) { Text($0.title).tag($0) }
+            }
+            .pickerStyle(.segmented)
 
-            ScrollView {
-                VStack(alignment: .leading, spacing: 28) {
-
-                    // Header
-                    HStack {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text("Settings")
-                                .font(.system(size: 26, weight: .semibold))
-                            Text("Your keys are stored in the system Keychain — never in plain text.")
-                                .font(.system(size: 13))
-                                .foregroundColor(.secondary)
-                        }
-                        Spacer()
-                        Button {
-                            dismiss()
-                        } label: {
-                            Image(systemName: "xmark.circle.fill")
-                                .font(.system(size: 22))
-                                .foregroundColor(.secondary)
-                        }
-                        .buttonStyle(.plain)
-                    }
-
-                    // ── AI ───────────────────────────────────────────────
-                    SettingsSection(title: "AI Reflection", colorScheme: colorScheme) {
-                        VStack(alignment: .leading, spacing: 14) {
-                            Picker("Provider", selection: Binding(
-                                get: { prefs.aiProvider },
-                                set: { prefs.aiProvider = $0; loadKey() }
-                            )) {
-                                ForEach(AIProvider.allCases) { p in
-                                    Text(p.displayName).tag(p)
-                                }
-                            }
-                            .pickerStyle(.segmented)
-                            .labelsHidden()
-
-                            VStack(alignment: .leading, spacing: 6) {
-                                Label("\(provider.displayName) API key", systemImage: "key.fill")
-                                    .font(.system(size: 13, weight: .medium))
-                                    .foregroundColor(.secondary)
-
-                                HStack(spacing: 8) {
-                                    Group {
-                                        if showKey {
-                                            TextField(provider.keyPlaceholder, text: $apiKey)
-                                        } else {
-                                            SecureField(provider.keyPlaceholder, text: $apiKey)
-                                        }
-                                    }
-                                    .textFieldStyle(.plain)
-                                    .font(.system(size: 14, design: .monospaced))
-                                    .padding(.horizontal, 10)
-                                    .padding(.vertical, 8)
-                                    .background(
-                                        RoundedRectangle(cornerRadius: 8)
-                                            .fill(colorScheme == .dark ? Color(white: 0.18) : Color.white)
-                                            .shadow(color: .black.opacity(0.06), radius: 2, y: 1)
-                                    )
-                                    .onSubmit(saveAndTestKey)
-
-                                    Button { showKey.toggle() } label: {
-                                        Image(systemName: showKey ? "eye.slash" : "eye")
-                                            .foregroundColor(.secondary)
-                                    }
-                                    .buttonStyle(.plain)
-                                    .help(showKey ? "Hide key" : "Show key")
-                                }
-
-                                HStack(spacing: 10) {
-                                    Button("Save & Test", action: saveAndTestKey)
-                                        .controlSize(.small)
-                                        .disabled(isTesting)
-                                    keyStatusLabel
-                                    Spacer()
-                                    Link("Get a key →", destination: provider.keyConsoleURL)
-                                        .font(.system(size: 12))
-                                }
-                                Text("Stored in your Mac's Keychain. Your entries go straight from this Mac to \(provider.displayName), only when you reflect.")
-                                    .font(.system(size: 11))
-                                    .foregroundColor(.secondary)
-                                    .fixedSize(horizontal: false, vertical: true)
-                            }
-
-                            Divider()
-
-                            VStack(alignment: .leading, spacing: 6) {
-                                Label("Model", systemImage: "cpu")
-                                    .font(.system(size: 13, weight: .medium))
-                                    .foregroundColor(.secondary)
-
-                                Picker("Model", selection: Binding(
-                                    get: { prefs.aiModel(for: provider) },
-                                    set: { prefs.setAIModel($0, for: provider) }
-                                )) {
-                                    ForEach(provider.suggestedModels) { m in
-                                        Text("\(m.name) · \(m.blurb)").tag(m.id)
-                                    }
-                                    if !provider.suggestedModels.contains(where: { $0.id == prefs.aiModel(for: provider) }) {
-                                        Text("Custom · \(prefs.aiModel(for: provider))").tag(prefs.aiModel(for: provider))
-                                    }
-                                }
-                                .labelsHidden()
-
-                                HStack(spacing: 6) {
-                                    Text("Model ID")
-                                        .font(.system(size: 11))
-                                        .foregroundColor(.secondary)
-                                    TextField(provider.defaultModel, text: Binding(
-                                        get: { prefs.aiModel(for: provider) },
-                                        set: { prefs.setAIModel($0, for: provider) }
-                                    ))
-                                    .textFieldStyle(.roundedBorder)
-                                    .font(.system(size: 11, design: .monospaced))
-                                }
-                            }
-                        }
-                    }
-
-                    // ── Storage ──────────────────────────────────────────
-                    SettingsSection(title: "Storage", colorScheme: colorScheme) {
-                        VStack(alignment: .leading, spacing: 10) {
-                            Label("Notes folder", systemImage: "folder")
-                                .font(.system(size: 13, weight: .medium))
-                                .foregroundColor(.secondary)
-                            Text(notesPath)
-                                .font(.system(size: 12, design: .monospaced))
-                                .textSelection(.enabled)
-                                .lineLimit(3)
-                            HStack(spacing: 8) {
-                                Button("Change Folder…", action: chooseFolder).controlSize(.small)
-                                Button("Show in Finder") { FileService.shared.openInFinder() }.controlSize(.small)
-                                if !FileService.shared.isUsingDefaultFolder {
-                                    Button("Use Default") { moveNotes { try FileService.shared.resetToDefaultFolder() } }
-                                        .controlSize(.small)
-                                }
-                            }
-                            Text("Entries are plain Markdown files. Pick a folder in iCloud Drive to sync them across your Macs. Existing notes and videos move with you.")
-                                .font(.system(size: 11))
-                                .foregroundColor(.secondary)
-                                .fixedSize(horizontal: false, vertical: true)
-                            if let storageError {
-                                Text(storageError).font(.system(size: 11)).foregroundColor(.red)
-                            }
-                        }
-                    }
-
-                    // ── Quick capture ────────────────────────────────────
-                    SettingsSection(title: "Quick Capture", colorScheme: colorScheme) {
-                        VStack(spacing: 0) {
-                            HStack(spacing: 12) {
-                                Image(systemName: "keyboard").font(.system(size: 15)).foregroundColor(.accentColor).frame(width: 28)
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text("Global shortcut").font(.system(size: 14, weight: .medium))
-                                    Text("Jot a note from any app, no permissions needed").font(.system(size: 12)).foregroundColor(.secondary)
-                                }
-                                Spacer()
-                                Text("⌥ Space")
-                                    .font(.system(size: 12, weight: .medium, design: .monospaced))
-                                    .padding(.horizontal, 8).padding(.vertical, 4)
-                                    .background(Color.secondary.opacity(0.12), in: RoundedRectangle(cornerRadius: 6))
-                            }
-                            .padding(.horizontal, 16).padding(.vertical, 12)
-                            Divider().padding(.leading, 44)
-                            SettingsToggleRow(icon: "menubar.rectangle", title: "Menu bar icon",
-                                              subtitle: "Quick note and open SynqApp from the menu bar",
-                                              isOn: $showMenuBarIcon)
-                        }
-                    }
-
-                    // ── Writing Features ─────────────────────────────────
-                    SettingsSection(title: "Writing Features", colorScheme: colorScheme) {
-                        VStack(spacing: 0) {
-                            SettingsToggleRow(icon: "number", title: "Word count",
-                                             subtitle: "Show live word count in the bottom bar",
-                                             isOn: $prefs.showWordCount)
-                            Divider().padding(.leading, 44)
-                            SettingsToggleRow(icon: "clock", title: "Reading time",
-                                             subtitle: "Estimated read time shown in bottom bar",
-                                             isOn: $prefs.showReadingTime)
-                            Divider().padding(.leading, 44)
-                            SettingsToggleRow(icon: "flame", title: "Writing streak",
-                                             subtitle: "Track consecutive days you've written",
-                                             isOn: $prefs.showStreak)
-                            Divider().padding(.leading, 44)
-                            SettingsToggleRow(icon: "tag", title: "Tags",
-                                             subtitle: "Parse #tags from entries for filtering",
-                                             isOn: $prefs.showTags)
-                            Divider().padding(.leading, 44)
-
-                            // Daily word goal
-                            HStack(spacing: 12) {
-                                Image(systemName: "target")
-                                    .font(.system(size: 15))
-                                    .foregroundColor(.accentColor)
-                                    .frame(width: 28)
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text("Daily word goal")
-                                        .font(.system(size: 14, weight: .medium))
-                                    Text(prefs.dailyWordGoal == 0
-                                         ? "No goal set"
-                                         : "\(prefs.dailyWordGoal) words per day")
-                                        .font(.system(size: 12))
-                                        .foregroundColor(.secondary)
-                                }
-                                Spacer()
-                                HStack(spacing: 8) {
-                                    ForEach([0, 100, 250, 500, 750, 1000], id: \.self) { goal in
-                                        Button {
-                                            prefs.dailyWordGoal = goal
-                                        } label: {
-                                            Text(goal == 0 ? "Off" : "\(goal)")
-                                                .font(.system(size: 11, weight: .medium))
-                                                .foregroundColor(prefs.dailyWordGoal == goal ? .white : .primary)
-                                                .padding(.horizontal, 8)
-                                                .padding(.vertical, 4)
-                                                .background(
-                                                    prefs.dailyWordGoal == goal
-                                                        ? Color.accentColor
-                                                        : Color.secondary.opacity(0.12),
-                                                    in: RoundedRectangle(cornerRadius: 6)
-                                                )
-                                        }
-                                        .buttonStyle(.plain)
-                                    }
-                                }
-                            }
-                            .padding(.horizontal, 16)
-                            .padding(.vertical, 12)
-                        }
-                    }
-
-                    // ── About ────────────────────────────────────────────
-                    SettingsSection(title: "About", colorScheme: colorScheme) {
-                        VStack(alignment: .leading, spacing: 8) {
-                            HStack {
-                                Text("SynqApp").font(.system(size: 14, weight: .medium))
-                                Spacer()
-                                Text(appVersion).font(.system(size: 13)).foregroundColor(.secondary)
-                            }
-                            HStack {
-                                Image(systemName: "arrow.up.right.square").font(.system(size: 12))
-                                Link("GitHub →", destination: URL(string: "https://github.com/aliarain/synqapp")!)
-                                    .font(.system(size: 12))
-                            }
-                            .foregroundColor(.accentColor)
-                        }
-                    }
-
+            Section("Quick Capture") {
+                LabeledContent("Global shortcut") {
+                    Text("⌥ Space").foregroundStyle(.secondary)
                 }
-                .padding(28)
+                Toggle("Show in menu bar", isOn: $showMenuBarIcon)
+            }
+
+            Section {
+                LabeledContent("Version", value: appVersion)
+                Link("SynqApp on GitHub", destination: URL(string: "https://github.com/aliarain/synqapp")!)
             }
         }
-        .frame(width: 520, height: 680)
-        .onAppear { loadKey() }
+        .formStyle(.grouped)
+        .frame(height: 300)
     }
-
-    // MARK: - Helpers
 
     private var appVersion: String {
         let info = Bundle.main.infoDictionary
-        let version = info?["CFBundleShortVersionString"] as? String ?? "1.0"
-        let build = info?["CFBundleVersion"] as? String ?? "1"
-        return "v\(version) (\(build))"
+        return "\(info?["CFBundleShortVersionString"] as? String ?? "1.0") (\(info?["CFBundleVersion"] as? String ?? "1"))"
+    }
+}
+
+// MARK: - Writing
+
+private struct WritingSettings: View {
+    @ObservedObject private var prefs = PreferencesService.shared
+
+    var body: some View {
+        Form {
+            Section("Editor") {
+                Picker("Font", selection: $prefs.selectedFont) {
+                    Text("New York").tag("Serif")
+                    Text("San Francisco").tag("System")
+                    Text("SF Mono").tag("Mono")
+                    if !PreferencesService.builtInFonts.contains(prefs.selectedFont) {
+                        Divider()
+                        Text(prefs.selectedFont).tag(prefs.selectedFont)
+                    }
+                }
+                LabeledContent("Other font") {
+                    Button("Choose…") { FontPanel.show() }
+                }
+                LabeledContent("Size") {
+                    Stepper("\(Int(prefs.fontSizeValue)) pt", value: $prefs.fontSizeValue, in: PreferencesService.sizeRange, step: 1)
+                }
+                Picker("Default mode", selection: Binding(get: { prefs.writingMode }, set: { prefs.writingMode = $0 })) {
+                    ForEach(WritingMode.allCases) { Text($0.label).tag($0) }
+                }
+                Toggle("Lock backspace (keep writing, fix it later)", isOn: $prefs.backspaceLocked)
+            }
+
+            Section("Status Bar") {
+                Toggle("Word count", isOn: $prefs.showWordCount)
+                Toggle("Reading time", isOn: $prefs.showReadingTime)
+                Toggle("Writing streak", isOn: $prefs.showStreak)
+                Picker("Daily word goal", selection: $prefs.dailyWordGoal) {
+                    Text("Off").tag(0)
+                    ForEach([100, 250, 500, 750, 1000], id: \.self) { Text("\($0) words").tag($0) }
+                }
+            }
+
+            Section("Sidebar") {
+                Toggle("Filter by #tags", isOn: $prefs.showTags)
+            }
+        }
+        .formStyle(.grouped)
+        .frame(height: 480)
+    }
+}
+
+/// Opens the standard macOS font panel and saves the family the user picks.
+enum FontPanel {
+    private final class Receiver: NSObject, NSFontChanging {
+        func changeFont(_ sender: NSFontManager?) {
+            guard let sender else { return }
+            let font = sender.convert(PreferencesService.shared.editorFont())
+            if let family = font.familyName { PreferencesService.shared.selectedFont = family }
+            PreferencesService.shared.fontSizeValue = Double(font.pointSize)
+        }
+        func validModesForFontPanel(_ fontPanel: NSFontPanel) -> NSFontPanel.ModeMask { [.collection, .face, .size] }
+    }
+    private static let receiver = Receiver()
+
+    static func show() {
+        let manager = NSFontManager.shared
+        manager.target = receiver
+        manager.setSelectedFont(PreferencesService.shared.editorFont(), isMultiple: false)
+        manager.orderFrontFontPanel(nil)
+    }
+}
+
+// MARK: - AI
+
+private struct AISettings: View {
+    @ObservedObject private var prefs = PreferencesService.shared
+    @State private var apiKey = ""
+    @State private var status: KeyStatus?
+
+    enum KeyStatus: Equatable { case removed, testing, valid, failure(String) }
+
+    private var provider: AIProvider { prefs.aiProvider }
+
+    var body: some View {
+        Form {
+            Picker("Provider", selection: Binding(get: { prefs.aiProvider }, set: { prefs.aiProvider = $0; loadKey() })) {
+                ForEach(AIProvider.allCases) { Text($0.displayName).tag($0) }
+            }
+            .pickerStyle(.segmented)
+
+            Section {
+                SecureField("API key", text: $apiKey, prompt: Text(provider.keyPlaceholder))
+                    .onSubmit(saveAndTest)
+                HStack {
+                    statusView
+                    Spacer()
+                    Link("Get a key", destination: provider.keyConsoleURL)
+                    Button("Save", action: saveAndTest)
+                        .disabled(status == .testing)
+                }
+            } header: {
+                Text("\(provider.displayName) API Key")
+            } footer: {
+                Text("Stored in your Keychain. Entries are sent from this Mac straight to \(provider.displayName), and only when you use Reflect or a recap.")
+                    .foregroundStyle(.secondary)
+            }
+
+            Section("Model") {
+                Picker("Model", selection: modelBinding) {
+                    ForEach(provider.suggestedModels) { model in
+                        Text(model.name).tag(model.id)
+                    }
+                    if !provider.suggestedModels.contains(where: { $0.id == modelBinding.wrappedValue }) {
+                        Text(modelBinding.wrappedValue).tag(modelBinding.wrappedValue)
+                    }
+                }
+                if let blurb = provider.suggestedModels.first(where: { $0.id == modelBinding.wrappedValue })?.blurb {
+                    Text(blurb).font(.caption).foregroundStyle(.secondary)
+                }
+                TextField("Model ID", text: modelBinding, prompt: Text(provider.defaultModel))
+                    .font(.system(.body, design: .monospaced))
+            }
+        }
+        .formStyle(.grouped)
+        .frame(height: 420)
+        .onAppear(perform: loadKey)
     }
 
-    private var isTesting: Bool {
-        if case .testing = keyStatus { return true }
-        return false
+    private var modelBinding: Binding<String> {
+        Binding(get: { prefs.aiModel(for: provider) }, set: { prefs.setAIModel($0, for: provider) })
     }
 
     @ViewBuilder
-    private var keyStatusLabel: some View {
-        switch keyStatus {
+    private var statusView: some View {
+        switch status {
         case .none:
-            EmptyView()
-        case .saved:
-            Label("Removed", systemImage: "trash").font(.system(size: 12)).foregroundColor(.secondary)
+            if KeychainService.shared.hasKey(for: provider) {
+                Label("Saved", systemImage: "checkmark.circle").foregroundStyle(.secondary)
+            }
+        case .removed:
+            Label("Removed", systemImage: "trash").foregroundStyle(.secondary)
         case .testing:
-            HStack(spacing: 4) { ProgressView().controlSize(.mini); Text("Testing…") }
-                .font(.system(size: 12))
+            HStack(spacing: 6) { ProgressView().controlSize(.small); Text("Checking…") }
         case .valid:
-            Label("Saved · key works", systemImage: "checkmark.circle.fill")
-                .font(.system(size: 12)).foregroundColor(.green)
+            Label("Key works", systemImage: "checkmark.circle.fill").foregroundStyle(.green)
         case .failure(let message):
-            Label(message, systemImage: "xmark.circle.fill")
-                .font(.system(size: 12)).foregroundColor(.red)
-                .lineLimit(2)
+            Label(message, systemImage: "xmark.octagon.fill").foregroundStyle(.red).lineLimit(2)
         }
-    }
-
-    private func chooseFolder() {
-        let panel = NSOpenPanel()
-        panel.canChooseDirectories = true
-        panel.canChooseFiles = false
-        panel.canCreateDirectories = true
-        panel.allowsMultipleSelection = false
-        panel.prompt = "Use This Folder"
-        panel.message = "Choose where SynqApp keeps your entries. Your existing notes will be moved there."
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-        moveNotes { try FileService.shared.changeFolder(to: url) }
-    }
-
-    private func moveNotes(_ change: () throws -> Void) {
-        do {
-            try change()
-            storageError = nil
-        } catch {
-            storageError = "Couldn't move your notes: \(error.localizedDescription)"
-        }
-        notesPath = FileService.shared.notesDir.path
     }
 
     private func loadKey() {
         apiKey = KeychainService.shared.apiKey(for: provider) ?? ""
-        keyStatus = nil
+        status = nil
     }
 
-    private func saveAndTestKey() {
+    private func saveAndTest() {
         let key = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
         let provider = provider
         KeychainService.shared.setAPIKey(key, for: provider)
-        guard !key.isEmpty else { keyStatus = .saved; return }
-        keyStatus = .testing
+        guard !key.isEmpty else { status = .removed; return }
+        status = .testing
         Task {
             switch await AIClient().validateKey(provider: provider, key: key) {
-            case .success: keyStatus = .valid
-            case .failure(let error): keyStatus = .failure(error.localizedDescription)
+            case .success: status = .valid
+            case .failure(let error): status = .failure(error.localizedDescription)
             }
-        }
-    }
-
-    @ViewBuilder
-    private func infoBox(_ text: String, colorScheme: ColorScheme) -> some View {
-        HStack(alignment: .top, spacing: 8) {
-            Image(systemName: "info.circle")
-                .foregroundColor(.accentColor)
-                .font(.system(size: 13))
-                .padding(.top, 1)
-            Text(text)
-                .font(.system(size: 12))
-                .foregroundColor(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .padding(10)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(Color.accentColor.opacity(0.08))
-        )
-    }
-}
-
-// MARK: - Section wrapper
-
-struct SettingsSection<Content: View>: View {
-    let title: String
-    let colorScheme: ColorScheme
-    @ViewBuilder let content: () -> Content
-
-    private var cardBg: Color {
-        colorScheme == .dark ? Color(white: 0.12) : Color.white
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text(title)
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundColor(.secondary)
-                .textCase(.uppercase)
-                .tracking(0.8)
-
-            content()
-                .padding(16)
-                .background(
-                    RoundedRectangle(cornerRadius: 12)
-                        .fill(cardBg)
-                        .shadow(color: .black.opacity(colorScheme == .dark ? 0.3 : 0.06), radius: 4, y: 2)
-                )
         }
     }
 }
 
-// MARK: - Settings toggle row
+// MARK: - Storage
 
-struct SettingsToggleRow: View {
-    let icon: String
-    let title: String
-    let subtitle: String
-    @Binding var isOn: Bool
+private struct StorageSettings: View {
+    @State private var path = FileService.shared.notesDir.path
+    @State private var error: String?
 
     var body: some View {
-        HStack(spacing: 12) {
-            Image(systemName: icon)
-                .font(.system(size: 15))
-                .foregroundColor(.accentColor)
-                .frame(width: 28)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title).font(.system(size: 14, weight: .medium))
-                Text(subtitle).font(.system(size: 12)).foregroundColor(.secondary)
+        Form {
+            Section {
+                LabeledContent("Notes folder") {
+                    Text(path)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                        .multilineTextAlignment(.trailing)
+                        .lineLimit(3)
+                }
+                HStack {
+                    Button("Show in Finder") { FileService.shared.openInFinder() }
+                    Spacer()
+                    if !FileService.shared.isUsingDefaultFolder {
+                        Button("Use Default") { change { try FileService.shared.resetToDefaultFolder() } }
+                    }
+                    Button("Change…", action: choose)
+                }
+                if let error {
+                    Text(error).foregroundStyle(.red)
+                }
+            } footer: {
+                Text("Every entry is a plain Markdown file. Choose a folder in iCloud Drive to keep your journal in sync across your Macs. Existing entries, videos and pins move with it.")
+                    .foregroundStyle(.secondary)
             }
-            Spacer()
-            Toggle("", isOn: $isOn).labelsHidden()
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 12)
+        .formStyle(.grouped)
+        .frame(height: 260)
+    }
+
+    private func choose() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.canCreateDirectories = true
+        panel.prompt = "Use This Folder"
+        panel.message = "Choose where SynqApp keeps your journal. Your existing entries will be moved there."
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        change { try FileService.shared.changeFolder(to: url) }
+    }
+
+    private func change(_ action: () throws -> Void) {
+        do {
+            try action()
+            error = nil
+        } catch {
+            self.error = "Couldn't move your entries: \(error.localizedDescription)"
+        }
+        path = FileService.shared.notesDir.path
     }
 }
