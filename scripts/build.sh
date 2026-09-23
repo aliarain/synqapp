@@ -9,6 +9,6 @@ xcodebuild -project synqapp.xcodeproj -scheme synqapp -configuration Debug \
   build 2>&1 | grep -E 'error:|warning: .*(synqapp|SynqCore)/|BUILD' | sort -u
 APP="$DERIVED/Build/Products/Debug/synqapp.app"
 if [ "$1" = "--run" ]; then
-  pkill -x synqapp 2>/dev/null || true
+  pkill -x synqapp 2>/dev/null && sleep 1 || true
   open "$APP"
 fi

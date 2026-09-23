@@ -30,27 +30,22 @@ struct BottomBarView: View {
     }
 
     var body: some View {
-        HStack(spacing: 0) {
-            FontButtonsSection(
-                prefs: prefs,
-                colorScheme: colorScheme,
-                randomFontName: $randomFontName,
-                editorText: vm.editorText,
-                entries: vm.entries,
-                onPrompt: onPrompt
-            )
-            Spacer()
-            UtilityButtonsSection(
-                vm: vm,
-                prefs: prefs,
-                timerRunning: $timerRunning,
-                timerSeconds: $timerSeconds,
-                timerTotal: $timerTotal,
-                isDictating: $isDictating,
-                onStartVideo: onStartVideo,
-                onReadingToggle: onReadingToggle,
-                colorScheme: colorScheme
-            )
+        // Drop the least important controls first as the window narrows, instead of squashing labels.
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 0) {
+                fontSection(compact: false)
+                Spacer(minLength: 16)
+                utilitySection
+            }
+            HStack(spacing: 0) {
+                fontSection(compact: true)
+                Spacer(minLength: 16)
+                utilitySection
+            }
+            HStack(spacing: 0) {
+                Spacer(minLength: 0)
+                utilitySection
+            }
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
@@ -62,6 +57,32 @@ struct BottomBarView: View {
             )
         )
     }
+
+    private func fontSection(compact: Bool) -> some View {
+        FontButtonsSection(
+            prefs: prefs,
+            colorScheme: colorScheme,
+            randomFontName: $randomFontName,
+            editorText: vm.editorText,
+            entries: vm.entries,
+            compact: compact,
+            onPrompt: onPrompt
+        )
+    }
+
+    private var utilitySection: some View {
+            UtilityButtonsSection(
+                vm: vm,
+                prefs: prefs,
+                timerRunning: $timerRunning,
+                timerSeconds: $timerSeconds,
+                timerTotal: $timerTotal,
+                isDictating: $isDictating,
+                onStartVideo: onStartVideo,
+                onReadingToggle: onReadingToggle,
+                colorScheme: colorScheme
+            )
+    }
 }
 
 // MARK: - Font cluster
@@ -72,6 +93,7 @@ struct FontButtonsSection: View {
     @Binding var randomFontName: String?
     let editorText: String
     let entries: [JournalEntry]
+    var compact = false
     var onPrompt: (String) -> Void
 
     @State private var showFontPicker = false
@@ -95,6 +117,7 @@ struct FontButtonsSection: View {
             BarButton(label: "\(Int(prefs.fontSize))px", color: labelColor) {
                 prefs.cycleFontSize()
             }
+            if !compact {
             dot(labelColor)
 
             // Arial
@@ -136,6 +159,8 @@ struct FontButtonsSection: View {
                 )
             }
 
+            }
+
             // ── Stats cluster ────────────────────────────────────────
             if prefs.showWordCount {
                 dot(labelColor)
@@ -144,7 +169,7 @@ struct FontButtonsSection: View {
                     .foregroundColor(labelColor)
             }
 
-            if prefs.showReadingTime {
+            if prefs.showReadingTime && !compact {
                 let rt = Stats.readingTimeLabel(editorText)
                 if !rt.isEmpty {
                     dot(labelColor)
@@ -164,7 +189,7 @@ struct FontButtonsSection: View {
                 }
             }
 
-            if prefs.hasDailyGoal {
+            if prefs.hasDailyGoal && !compact {
                 dot(labelColor)
                 DailyGoalIndicator(
                     entries: entries,
@@ -523,6 +548,8 @@ struct BarButton: View {
             Text(label)
                 .font(.system(size: 13))
                 .foregroundColor(hovering ? .primary : color)
+                .lineLimit(1)
+                .fixedSize()
         }
         .buttonStyle(.plain)
         .onHover { h in

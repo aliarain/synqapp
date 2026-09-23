@@ -91,3 +91,84 @@ public enum Stats {
         return freq.sorted { $0.value != $1.value ? $0.value > $1.value : $0.key < $1.key }.map(\.key)
     }
 }
+
+// MARK: - Insights
+
+public struct Insights: Equatable, Sendable {
+    public let streak: Int
+    public let entriesThisYear: Int
+    public let wordsThisYear: Int
+    public let daysJournaledThisYear: Int
+    /// Words written on each of the last seven days, oldest first; the last element is today.
+    public let lastSevenDays: [DayActivity]
+
+    public struct DayActivity: Equatable, Sendable {
+        public let date: Date
+        public let words: Int
+    }
+
+    public static func compute(entries: [JournalEntry], now: Date = Date(), calendar: Calendar = .current) -> Insights {
+        let year = calendar.component(.year, from: now)
+        let thisYear = entries.filter {
+            calendar.component(.year, from: $0.createdAt) == year
+                && !$0.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+        let today = calendar.startOfDay(for: now)
+        let week: [DayActivity] = (0..<7).reversed().compactMap { offset in
+            guard let day = calendar.date(byAdding: .day, value: -offset, to: today) else { return nil }
+            let words = entries
+                .filter { calendar.isDate($0.createdAt, inSameDayAs: day) }
+                .reduce(0) { $0 + Stats.wordCount($1.content) }
+            return DayActivity(date: day, words: words)
+        }
+        return Insights(
+            streak: Stats.currentStreak(entries: entries, now: now, calendar: calendar),
+            entriesThisYear: thisYear.count,
+            wordsThisYear: thisYear.reduce(0) { $0 + Stats.wordCount($1.content) },
+            daysJournaledThisYear: Set(thisYear.map { calendar.startOfDay(for: $0.createdAt) }).count,
+            lastSevenDays: week
+        )
+    }
+}
+
+// MARK: - Timeline grouping
+
+public struct EntrySection: Identifiable, Sendable {
+    public let id: String
+    public let title: String
+    public let entries: [JournalEntry]
+}
+
+public enum Timeline {
+    /// Pinned entries first, then newest-first groups by month ("September 2026").
+    public static func sections(for entries: [JournalEntry], calendar: Calendar = .current) -> [EntrySection] {
+        var sections: [EntrySection] = []
+        let pinned = entries.filter(\.isPinned).sorted { $0.createdAt > $1.createdAt }
+        if !pinned.isEmpty { sections.append(EntrySection(id: "pinned", title: "Pinned", entries: pinned)) }
+
+        let rest = entries.filter { !$0.isPinned }.sorted { $0.createdAt > $1.createdAt }
+        var current: (key: DateComponents, items: [JournalEntry])?
+        func flush() {
+            guard let c = current, let first = c.items.first else { return }
+            let title = first.createdAt.formatted(.dateTime.month(.wide).year())
+            sections.append(EntrySection(id: "\(c.key.year ?? 0)-\(c.key.month ?? 0)", title: title, entries: c.items))
+        }
+        for entry in rest {
+            let key = calendar.dateComponents([.year, .month], from: entry.createdAt)
+            if current?.key == key {
+                current?.items.append(entry)
+            } else {
+                flush()
+                current = (key, [entry])
+            }
+        }
+        flush()
+        return sections
+    }
+
+    /// Entries that mention every selected tag (case-insensitive).
+    public static func filter(_ entries: [JournalEntry], tags: Set<String>) -> [JournalEntry] {
+        guard !tags.isEmpty else { return entries }
+        return entries.filter { tags.isSubset(of: Set(Stats.tags(in: $0.content))) }
+    }
+}

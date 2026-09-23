@@ -270,3 +270,43 @@ final class StubProtocol: URLProtocol, @unchecked Sendable {
         }
     }
 }
+
+@Suite struct InsightsTests {
+    @Test func summarisesTheYearAndWeek() {
+        let entries = [
+            entry("one two three", on: day(22)),
+            entry("four five", on: day(22, hour: 18)),
+            entry("six", on: day(20)),
+            entry("  ", on: day(19)),
+            entry("last year", on: utc.date(from: DateComponents(year: 2025, month: 12, day: 31, hour: 12))!),
+        ]
+        let insights = Insights.compute(entries: entries, now: day(22, hour: 20), calendar: utc)
+        #expect(insights.entriesThisYear == 3)
+        #expect(insights.wordsThisYear == 6)
+        #expect(insights.daysJournaledThisYear == 2)
+        #expect(insights.streak == 1)
+        #expect(insights.lastSevenDays.map(\.words) == [0, 0, 0, 0, 1, 0, 5])
+        #expect(insights.lastSevenDays.last?.date == utc.startOfDay(for: day(22)))
+    }
+}
+
+@Suite struct TimelineTests {
+    @Test func groupsPinnedThenByMonthNewestFirst() {
+        let aug = utc.date(from: DateComponents(year: 2026, month: 8, day: 30, hour: 12))!
+        var pinned = entry("pinned", on: aug)
+        pinned.isPinned = true
+        let entries = [entry("sep old", on: day(1)), pinned, entry("aug", on: aug), entry("sep new", on: day(20))]
+        let sections = Timeline.sections(for: entries, calendar: utc)
+        #expect(sections.map(\.id) == ["pinned", "2026-9", "2026-8"])
+        #expect(sections[1].entries.map(\.body) == ["sep new", "sep old"])
+        #expect(sections[2].entries.map(\.body) == ["aug"])
+    }
+
+    @Test func filtersByAllSelectedTags() {
+        let a = entry("#work #gym", on: day(1))
+        let b = entry("#work only", on: day(2))
+        #expect(Timeline.filter([a, b], tags: ["work"]).count == 2)
+        #expect(Timeline.filter([a, b], tags: ["work", "gym"]).map(\.id) == [a.id])
+        #expect(Timeline.filter([a, b], tags: []).count == 2)
+    }
+}

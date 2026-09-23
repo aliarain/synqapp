@@ -27,6 +27,8 @@ struct TimerButtonView: View {
         Text(label)
             .font(.system(size: 13))
             .foregroundColor(isRunning ? .primary : .secondary)
+            .monospacedDigit()
+            .fixedSize()
             .scaleEffect(scale)
             .onHover { hovering in
                 isHovering = hovering

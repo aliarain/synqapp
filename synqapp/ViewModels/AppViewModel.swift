@@ -42,7 +42,9 @@ final class AppViewModel: ObservableObject {
     @Published var currentVideoURL: URL? = nil
 
     // MARK: Sidebar
-    @Published var sidebarVisible: Bool = false
+    @Published var sidebarVisible: Bool = UserDefaults.standard.bool(forKey: "sidebarVisible") {
+        didSet { UserDefaults.standard.set(sidebarVisible, forKey: "sidebarVisible") }
+    }
 
     // MARK: Settings
     @Published var showSettings: Bool = false

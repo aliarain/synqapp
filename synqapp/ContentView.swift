@@ -54,10 +54,10 @@ struct ContentView: View {
                     writingView
                 case .reflectionSelection:
                     ReflectionSelectionView(vm: vm, colorScheme: colorScheme)
-                        .frame(minWidth: 800, minHeight: 600)
+                        .frame(minWidth: 720, minHeight: 500)
                 case .voiceAgent(let context):
                     VoiceAgentView(vm: vm, context: context, colorScheme: colorScheme)
-                        .frame(minWidth: 1100, minHeight: 600)
+                        .frame(minWidth: 720, minHeight: 500)
                 }
             }
 
@@ -201,7 +201,7 @@ struct ContentView: View {
                 }
             }
         }
-        .frame(minWidth: 1100, minHeight: 600)
+        .frame(minWidth: vm.sidebarVisible ? 1020 : 720, minHeight: 500)
         .background(
             colorScheme == .dark
                 ? Color(red: 0.08, green: 0.08, blue: 0.08)
