@@ -4,6 +4,7 @@
 
 import SwiftUI
 import Combine
+import SynqCore
 
 struct ContentView: View {
 

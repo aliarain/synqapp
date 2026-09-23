@@ -4,6 +4,7 @@
 
 import SwiftUI
 import Combine
+import SynqCore
 
 // MARK: - App mode
 
@@ -50,7 +51,7 @@ final class AppViewModel: ObservableObject {
     @Published var toast: ToastMessage? = nil
 
     // MARK: Services
-    let prefs = PreferencesService()
+    let prefs = PreferencesService.shared
     let fileService = FileService.shared
 
     // MARK: Autosave
@@ -188,7 +189,7 @@ final class AppViewModel: ObservableObject {
         let id = UUID()
         let now = Date()
         let filename = fileService.makeFilename(id: id, date: now)
-        let videoFilename = filename.replacingOccurrences(of: ".md", with: ".mov")
+        let videoFilename = EntryFilename.videoName(for: filename)
 
         do {
             // Create video entry directory
@@ -217,7 +218,8 @@ final class AppViewModel: ObservableObject {
                 createdAt: now,
                 body: "Video Entry",
                 entryType: .video,
-                videoFilename: videoFilename
+                videoFilename: videoFilename,
+                transcript: transcript
             )
             entries.insert(entry, at: 0)
             open(entry)
@@ -234,11 +236,7 @@ final class AppViewModel: ObservableObject {
     }
 
     func selectScope(_ scope: ReflectionScope) {
-        let context = ReflectionService.buildContext(
-            scope: scope,
-            currentText: editorText,
-            allEntries: entries
-        )
+        let context = Reflection.context(scope: scope, currentText: chatSourceText, entries: entries)
         mode = .voiceAgent(context: context)
     }
 
@@ -249,9 +247,8 @@ final class AppViewModel: ObservableObject {
     // MARK: - Chat prompt helpers
 
     var chatSourceText: String {
-        if let vf = activeEntry?.videoFilename,
-           let transcript = fileService.loadTranscript(for: vf) {
-            return transcript
+        if activeEntry?.entryType == .video {
+            return activeEntry?.content ?? ""
         }
         return editorText.trimmingCharacters(in: .whitespacesAndNewlines)
     }

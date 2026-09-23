@@ -3,6 +3,7 @@
 //  Spill — exports a journal entry to PDF
 
 import AppKit
+import SynqCore
 
 final class PDFExportService {
 

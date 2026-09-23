@@ -52,15 +52,20 @@ Here's my journal entry:
 
     private var fgColor: Color { .primary }
 
+    /// `.urlQueryAllowed` leaves `&`, `=` and `+` unescaped, which cut prompts short at the first ampersand.
+    private func encoded(_ text: String) -> String? {
+        text.addingPercentEncoding(withAllowedCharacters: CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-._~"))
+    }
+
     private var gptURL: URL? {
         let full = gptPrompt + "\n\n" + sourceText
-        guard let encoded = full.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) else { return nil }
+        guard let encoded = encoded(full) else { return nil }
         return URL(string: "https://chat.openai.com/?prompt=" + encoded)
     }
 
     private var claudeURL: URL? {
         let full = claudePrompt + "\n\n" + sourceText
-        guard let encoded = full.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) else { return nil }
+        guard let encoded = encoded(full) else { return nil }
         return URL(string: "https://claude.ai/new?q=" + encoded)
     }
 

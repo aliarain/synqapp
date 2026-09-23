@@ -3,6 +3,7 @@
 //  SynqApp
 
 import SwiftUI
+import SynqCore
 
 @main
 struct SynqApp: App {

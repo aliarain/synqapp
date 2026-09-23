@@ -3,6 +3,7 @@
 //  Spill — scope picker before entering voice session
 
 import SwiftUI
+import SynqCore
 
 struct ReflectionSelectionView: View {
 

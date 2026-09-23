@@ -3,6 +3,7 @@
 //  SynqApp — bottom utility bar
 
 import SwiftUI
+import SynqCore
 
 struct BottomBarView: View {
 
@@ -79,8 +80,6 @@ struct FontButtonsSection: View {
         colorScheme == .dark ? Color.gray.opacity(0.8) : Color.gray
     }
 
-    private var stats: StatsService { StatsService.shared }
-
     // Label for the font button — shows current font if it's not Arial/Times
     private var fontButtonLabel: String {
         switch prefs.selectedFont {
@@ -140,13 +139,13 @@ struct FontButtonsSection: View {
             // ── Stats cluster ────────────────────────────────────────
             if prefs.showWordCount {
                 dot(labelColor)
-                Text(stats.wordCountLabel(editorText))
+                Text(Stats.wordCountLabel(editorText))
                     .font(.system(size: 12))
                     .foregroundColor(labelColor)
             }
 
             if prefs.showReadingTime {
-                let rt = stats.readingTimeLabel(editorText)
+                let rt = Stats.readingTimeLabel(editorText)
                 if !rt.isEmpty {
                     dot(labelColor)
                     Text(rt)
@@ -156,10 +155,10 @@ struct FontButtonsSection: View {
             }
 
             if prefs.showStreak {
-                let streak = stats.currentStreak(entries: entries)
+                let streak = Stats.currentStreak(entries: entries)
                 if streak > 0 {
                     dot(labelColor)
-                    Text(stats.streakLabel(streak))
+                    Text(Stats.streakLabel(streak))
                         .font(.system(size: 12))
                         .foregroundColor(labelColor)
                 }
@@ -329,11 +328,10 @@ struct DailyGoalIndicator: View {
     let goal: Int
     let colorScheme: ColorScheme
 
-    private var stats: StatsService { StatsService.shared }
-
     var body: some View {
-        let progress = stats.goalProgress(entries: entries, goal: goal)
-        let label = stats.goalLabel(entries: entries, goal: goal)
+        let todayWords = Stats.todayWordCount(entries: entries)
+        let progress = Stats.goalProgress(todayWords: todayWords, goal: goal)
+        let label = Stats.goalLabel(todayWords: todayWords, goal: goal)
         let done = progress >= 1.0
 
         HStack(spacing: 5) {
@@ -374,6 +372,7 @@ struct UtilityButtonsSection: View {
     let colorScheme: ColorScheme
 
     @State private var showingModePicker = false
+    @State private var showingChatMenu = false
 
     private var labelColor: Color {
         colorScheme == .dark ? Color.gray.opacity(0.8) : Color.gray
@@ -381,6 +380,20 @@ struct UtilityButtonsSection: View {
 
     var body: some View {
         HStack(spacing: 8) {
+
+            BarButton(label: "Reflect", color: .accentColor) {
+                vm.startReflection()
+            }
+            .help("Talk this through with AI")
+
+            BarIconButton(icon: "arrow.up.forward.app", color: labelColor, help: "Open in ChatGPT or Claude") {
+                showingChatMenu = true
+            }
+            .popover(isPresented: $showingChatMenu, arrowEdge: .top) {
+                ChatMenuView(sourceText: vm.chatSourceText, colorScheme: colorScheme, isPresented: $showingChatMenu)
+            }
+
+            dot(labelColor)
 
             // Timer
             TimerButtonView(

@@ -1,16 +1,19 @@
 //  VoiceAgentView.swift
-//  SynqApp — AI Reflect: text mode uses OpenAI directly, voice mode uses LiveKit
+//  SynqApp — AI Reflect: stream a conversation about your entries with Claude or OpenAI
 
 import SwiftUI
 import Combine
+import SynqCore
 
 // MARK: - Chat message
 
 struct ChatMessage: Identifiable {
     let id = UUID()
-    let text: String
-    let isUser: Bool
+    let role: ChatTurn.Role
+    var text: String
     var isStreaming: Bool = false
+
+    var isUser: Bool { role == .user }
 }
 
 // MARK: - ViewModel
@@ -21,158 +24,99 @@ final class VoiceAgentViewModel: ObservableObject {
     @Published var isConnected = false
     @Published var isConnecting = false
     @Published var isMuted = false
-    @Published var isTextMode = true          // default to text if no LiveKit config
+    @Published var isTextMode = true
     @Published var errorMessage: String? = nil
     @Published var inputText = ""
     @Published var isAITyping = false
 
     private let context: String
-    private let keychain = KeychainService.shared
+    private let prefs = PreferencesService.shared
+    private let client = AIClient()
+    private var replyTask: Task<Void, Never>?
 
     init(context: String) {
         self.context = context
-        // Default to text mode if no LiveKit config
-        isTextMode = !keychain.hasLiveKitConfig
+    }
+
+    /// The journal context opens the conversation; every exchange after it is sent as real turns.
+    private var turns: [ChatTurn] {
+        [ChatTurn(.user, context)] + messages
+            .filter { !$0.text.isEmpty }
+            .map { ChatTurn($0.role, $0.text) }
     }
 
     // MARK: - Connect
 
     func connect() {
-        isConnecting = true
-        errorMessage = nil
-
-        if keychain.hasLiveKitConfig {
-            connectLiveKit()
-        } else if keychain.hasOpenAIKey {
-            connectTextOnly()
-        } else {
-            isConnecting = false
-            errorMessage = "No API key configured. Open Settings to add your OpenAI key."
+        guard !isConnected else { return }
+        guard KeychainService.shared.hasKey(for: prefs.aiProvider) else {
+            errorMessage = AIError.missingKey(prefs.aiProvider).localizedDescription
+            return
         }
-    }
-
-    // MARK: - Text-only mode (OpenAI direct)
-
-    private func connectTextOnly() {
-        isConnecting = false
         isConnected = true
-        isTextMode = true
-
-        // Send context and get first AI response
-        streamAIResponse(userMessage: context, isInitial: true)
+        requestReply()
     }
 
     func sendText() {
         let text = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty, !isAITyping else { return }
         inputText = ""
-        messages.append(ChatMessage(text: text, isUser: true))
-        streamAIResponse(userMessage: text, isInitial: false)
+        messages.append(ChatMessage(role: .user, text: text))
+        requestReply()
     }
 
-    private func streamAIResponse(userMessage: String, isInitial: Bool) {
+    private func requestReply() {
+        guard let request = prefs.aiRequest(system: Reflection.systemPrompt, turns: turns) else {
+            errorMessage = AIError.missingKey(prefs.aiProvider).localizedDescription
+            return
+        }
+        let reply = ChatMessage(role: .assistant, text: "", isStreaming: true)
+        messages.append(reply)
         isAITyping = true
+        errorMessage = nil
 
-        // Build conversation history for context
-        var conversationMessages: [AIMessage] = [
-            AIMessage(role: "system", content: ReflectionService.aiSystemPrompt)
-        ]
-
-        // Add journal context as first user message on initial call
-        if isInitial {
-            conversationMessages.append(AIMessage(role: "user", content: context))
-        } else {
-            // Include prior conversation
-            conversationMessages.append(AIMessage(role: "user", content: context))
-            for msg in messages {
-                conversationMessages.append(AIMessage(
-                    role: msg.isUser ? "user" : "assistant",
-                    content: msg.text
-                ))
-            }
-        }
-
-        // Placeholder streaming message
-        let streamingId = UUID()
-        var streamingMsg = ChatMessage(text: "", isUser: false, isStreaming: true)
-        streamingMsg = ChatMessage(text: "", isUser: false, isStreaming: true)
-        messages.append(streamingMsg)
-        let insertIndex = messages.count - 1
-
-        let model = UserDefaults.standard.string(forKey: "aiModel") ?? "gpt-4o-mini"
-
-        AIService.shared.streamReflect(
-            context: isInitial ? context : buildConversationContext(),
-            model: model,
-            onToken: { [weak self] token in
-                guard let self else { return }
-                var updated = self.messages[insertIndex]
-                let newText = updated.text + token
-                self.messages[insertIndex] = ChatMessage(
-                    text: newText,
-                    isUser: false,
-                    isStreaming: true
-                )
-            },
-            onDone: { [weak self] result in
-                guard let self else { return }
-                self.isAITyping = false
-                switch result {
-                case .success:
-                    // Mark streaming done
-                    let finalText = self.messages[insertIndex].text
-                    self.messages[insertIndex] = ChatMessage(
-                        text: finalText,
-                        isUser: false,
-                        isStreaming: false
-                    )
-                case .failure(let error):
-                    self.messages.removeLast()
-                    self.errorMessage = error.localizedDescription
+        replyTask = Task { [weak self, client] in
+            do {
+                for try await chunk in client.stream(request) {
+                    self?.update(reply.id) { $0.text += chunk }
                 }
+            } catch {
+                self?.errorMessage = error.localizedDescription
             }
-        )
-    }
-
-    private func buildConversationContext() -> String {
-        // Build full conversation for multi-turn
-        var parts = ["[Journal context]\n\(context)\n\n[Conversation so far]"]
-        for msg in messages.dropLast() { // drop the streaming placeholder
-            parts.append("\(msg.isUser ? "User" : "Assistant"): \(msg.text)")
+            self?.finishReply(reply.id)
         }
-        return parts.joined(separator: "\n")
     }
 
-    // MARK: - LiveKit (stub — wire SDK here)
+    private func update(_ id: UUID, _ change: (inout ChatMessage) -> Void) {
+        guard let index = messages.firstIndex(where: { $0.id == id }) else { return }
+        change(&messages[index])
+    }
 
-    private func connectLiveKit() {
-        // TODO: fetch token from livekitTokenURL, then room.connect(livekitURL, token)
-        // For now fall back to text mode
-        isConnecting = false
-        isConnected = true
-        isTextMode = true
-        errorMessage = "LiveKit voice coming soon. Using text mode."
-        streamAIResponse(userMessage: context, isInitial: true)
+    private func finishReply(_ id: UUID) {
+        isAITyping = false
+        update(id) { $0.isStreaming = false }
+        messages.removeAll { $0.id == id && $0.text.isEmpty }
     }
 
     // MARK: - Controls
 
     func toggleMute() {
         isMuted.toggle()
-        // TODO: room.localParticipant.setMicrophone(enabled: !isMuted)
     }
 
     func disconnect() {
+        replyTask?.cancel()
+        replyTask = nil
         isConnected = false
         isConnecting = false
-        cleanup()
+        isAITyping = false
     }
 
     func cleanup() {
+        disconnect()
         messages = []
         inputText = ""
         errorMessage = nil
-        isAITyping = false
     }
 }
 
@@ -304,9 +248,9 @@ struct StartView: View {
                 .buttonStyle(ProminentButtonStyle())
                 .frame(width: 58 * g, height: 11 * g)
 
-            Text(KeychainService.shared.hasOpenAIKey
-                 ? "Powered by your OpenAI key"
-                 : "Add your OpenAI key in Settings to begin")
+            Text(KeychainService.shared.hasKey(for: PreferencesService.shared.aiProvider)
+                 ? "Powered by your \(PreferencesService.shared.aiProvider.displayName) key"
+                 : "Add your \(PreferencesService.shared.aiProvider.displayName) API key in Settings to begin")
                 .font(.system(size: 12))
                 .foregroundColor(fg3)
                 .multilineTextAlignment(.center)

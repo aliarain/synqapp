@@ -3,32 +3,24 @@
 //  SynqApp — API key configuration, model selection, voice backend
 
 import SwiftUI
+import SynqCore
 
 struct SettingsView: View {
 
     let colorScheme: ColorScheme
     @Environment(\.dismiss) private var dismiss
 
-    // Use a shared prefs instance so toggles actually persist
-    @StateObject private var prefs = PreferencesService()
+    @ObservedObject private var prefs = PreferencesService.shared
 
-    // MARK: - Local state (loaded from Keychain on appear)
+    @State private var apiKey: String = ""
+    @State private var showKey = false
+    @State private var keyStatus: KeyStatus? = nil
 
-    @State private var openAIKey: String = ""
-    @State private var livekitURL: String = ""
-    @State private var livekitTokenURL: String = ""
-    @State private var selectedModel: String = UserDefaults.standard.string(forKey: "aiModel") ?? "gpt-4o-mini"
-
-    @State private var showOpenAIKey = false
-    @State private var isSaved = false
-    @State private var isTestingKey = false
-    @State private var keyTestResult: KeyTestResult? = nil
-
-    enum KeyTestResult {
-        case success, failure(String)
+    enum KeyStatus {
+        case saved, testing, valid, failure(String)
     }
 
-    private let models = ["gpt-4o-mini", "gpt-4o", "gpt-4-turbo", "gpt-3.5-turbo"]
+    private var provider: AIProvider { prefs.aiProvider }
 
     private var bg: Color {
         colorScheme == .dark
@@ -67,22 +59,31 @@ struct SettingsView: View {
                         .buttonStyle(.plain)
                     }
 
-                    // ── OpenAI ──────────────────────────────────────────
-                    SettingsSection(title: "AI · OpenAI", colorScheme: colorScheme) {
+                    // ── AI ───────────────────────────────────────────────
+                    SettingsSection(title: "AI Reflection", colorScheme: colorScheme) {
                         VStack(alignment: .leading, spacing: 14) {
+                            Picker("Provider", selection: Binding(
+                                get: { prefs.aiProvider },
+                                set: { prefs.aiProvider = $0; loadKey() }
+                            )) {
+                                ForEach(AIProvider.allCases) { p in
+                                    Text(p.displayName).tag(p)
+                                }
+                            }
+                            .pickerStyle(.segmented)
+                            .labelsHidden()
 
-                            // API Key
                             VStack(alignment: .leading, spacing: 6) {
-                                Label("API Key", systemImage: "key.fill")
+                                Label("\(provider.displayName) API key", systemImage: "key.fill")
                                     .font(.system(size: 13, weight: .medium))
                                     .foregroundColor(.secondary)
 
                                 HStack(spacing: 8) {
                                     Group {
-                                        if showOpenAIKey {
-                                            TextField("sk-...", text: $openAIKey)
+                                        if showKey {
+                                            TextField(provider.keyPlaceholder, text: $apiKey)
                                         } else {
-                                            SecureField("sk-...", text: $openAIKey)
+                                            SecureField(provider.keyPlaceholder, text: $apiKey)
                                         }
                                     }
                                     .textFieldStyle(.plain)
@@ -94,118 +95,63 @@ struct SettingsView: View {
                                             .fill(colorScheme == .dark ? Color(white: 0.18) : Color.white)
                                             .shadow(color: .black.opacity(0.06), radius: 2, y: 1)
                                     )
+                                    .onSubmit(saveAndTestKey)
 
-                                    Button {
-                                        showOpenAIKey.toggle()
-                                    } label: {
-                                        Image(systemName: showOpenAIKey ? "eye.slash" : "eye")
+                                    Button { showKey.toggle() } label: {
+                                        Image(systemName: showKey ? "eye.slash" : "eye")
                                             .foregroundColor(.secondary)
                                     }
                                     .buttonStyle(.plain)
+                                    .help(showKey ? "Hide key" : "Show key")
                                 }
 
-                                HStack(spacing: 8) {
-                                    // Test key
-                                    Button {
-                                        testOpenAIKey()
-                                    } label: {
-                                        HStack(spacing: 4) {
-                                            if isTestingKey {
-                                                ProgressView().controlSize(.mini)
-                                            }
-                                            Text(isTestingKey ? "Testing…" : "Test Key")
-                                        }
+                                HStack(spacing: 10) {
+                                    Button("Save & Test", action: saveAndTestKey)
+                                        .controlSize(.small)
+                                        .disabled(isTesting)
+                                    keyStatusLabel
+                                    Spacer()
+                                    Link("Get a key →", destination: provider.keyConsoleURL)
                                         .font(.system(size: 12))
-                                    }
-                                    .buttonStyle(.plain)
-                                    .foregroundColor(.accentColor)
-                                    .disabled(openAIKey.isEmpty || isTestingKey)
-
-                                    if let result = keyTestResult {
-                                        switch result {
-                                        case .success:
-                                            Label("Valid", systemImage: "checkmark.circle.fill")
-                                                .font(.system(size: 12))
-                                                .foregroundColor(.green)
-                                        case .failure(let msg):
-                                            Label(msg, systemImage: "xmark.circle.fill")
-                                                .font(.system(size: 12))
-                                                .foregroundColor(.red)
-                                        }
-                                    }
                                 }
+                                Text("Stored in your Mac's Keychain. Your entries go straight from this Mac to \(provider.displayName), only when you reflect.")
+                                    .font(.system(size: 11))
+                                    .foregroundColor(.secondary)
+                                    .fixedSize(horizontal: false, vertical: true)
                             }
 
                             Divider()
 
-                            // Model picker
                             VStack(alignment: .leading, spacing: 6) {
                                 Label("Model", systemImage: "cpu")
                                     .font(.system(size: 13, weight: .medium))
                                     .foregroundColor(.secondary)
 
-                                Picker("", selection: $selectedModel) {
-                                    ForEach(models, id: \.self) { model in
-                                        Text(model).tag(model)
+                                Picker("Model", selection: Binding(
+                                    get: { prefs.aiModel(for: provider) },
+                                    set: { prefs.setAIModel($0, for: provider) }
+                                )) {
+                                    ForEach(provider.suggestedModels) { m in
+                                        Text("\(m.name) · \(m.blurb)").tag(m.id)
+                                    }
+                                    if !provider.suggestedModels.contains(where: { $0.id == prefs.aiModel(for: provider) }) {
+                                        Text("Custom · \(prefs.aiModel(for: provider))").tag(prefs.aiModel(for: provider))
                                     }
                                 }
-                                .pickerStyle(.segmented)
-                                .onChange(of: selectedModel) { m in
-                                    UserDefaults.standard.set(m, forKey: "aiModel")
+                                .labelsHidden()
+
+                                HStack(spacing: 6) {
+                                    Text("Model ID")
+                                        .font(.system(size: 11))
+                                        .foregroundColor(.secondary)
+                                    TextField(provider.defaultModel, text: Binding(
+                                        get: { prefs.aiModel(for: provider) },
+                                        set: { prefs.setAIModel($0, for: provider) }
+                                    ))
+                                    .textFieldStyle(.roundedBorder)
+                                    .font(.system(size: 11, design: .monospaced))
                                 }
-
-                                Text(modelDescription(selectedModel))
-                                    .font(.system(size: 12))
-                                    .foregroundColor(.secondary)
                             }
-
-                            // Get key link
-                            HStack {
-                                Image(systemName: "arrow.up.right.square")
-                                    .font(.system(size: 12))
-                                Link("Get an OpenAI API key →",
-                                     destination: URL(string: "https://platform.openai.com/api-keys")!)
-                                    .font(.system(size: 12))
-                            }
-                            .foregroundColor(.accentColor)
-                        }
-                    }
-
-                    // ── LiveKit Voice ────────────────────────────────────
-                    SettingsSection(title: "Voice · LiveKit", colorScheme: colorScheme) {
-                        VStack(alignment: .leading, spacing: 14) {
-
-                            infoBox(
-                                "Voice Reflect uses LiveKit for real-time audio. You need a running token server — see the README for the one-command local setup.",
-                                colorScheme: colorScheme
-                            )
-
-                            // LiveKit server URL
-                            settingsField(
-                                label: "LiveKit Server URL",
-                                icon: "server.rack",
-                                placeholder: "wss://your-livekit-server.com",
-                                text: $livekitURL,
-                                colorScheme: colorScheme
-                            )
-
-                            // Token endpoint
-                            settingsField(
-                                label: "Token Endpoint",
-                                icon: "link",
-                                placeholder: "http://localhost:8000/getToken",
-                                text: $livekitTokenURL,
-                                colorScheme: colorScheme
-                            )
-
-                            HStack {
-                                Image(systemName: "arrow.up.right.square")
-                                    .font(.system(size: 12))
-                                Link("LiveKit Cloud (free tier) →",
-                                     destination: URL(string: "https://cloud.livekit.io")!)
-                                    .font(.system(size: 12))
-                            }
-                            .foregroundColor(.accentColor)
                         }
                     }
 
@@ -277,132 +223,75 @@ struct SettingsView: View {
                             HStack {
                                 Text("SynqApp").font(.system(size: 14, weight: .medium))
                                 Spacer()
-                                Text("v1.0.0").font(.system(size: 13)).foregroundColor(.secondary)
+                                Text(appVersion).font(.system(size: 13)).foregroundColor(.secondary)
                             }
-                            Text("Open source · MIT License")
-                                .font(.system(size: 12))
-                                .foregroundColor(.secondary)
                             HStack {
                                 Image(systemName: "arrow.up.right.square").font(.system(size: 12))
-                                Link("GitHub →", destination: URL(string: "https://github.com")!)
+                                Link("GitHub →", destination: URL(string: "https://github.com/aliarain/synqapp")!)
                                     .font(.system(size: 12))
                             }
                             .foregroundColor(.accentColor)
                         }
                     }
 
-                    // Save button
-                    HStack {
-                        Spacer()
-                        Button(action: save) {
-                            HStack(spacing: 6) {
-                                if isSaved {
-                                    Image(systemName: "checkmark")
-                                }
-                                Text(isSaved ? "Saved" : "Save Settings")
-                                    .font(.system(size: 14, weight: .semibold))
-                            }
-                            .foregroundColor(.white)
-                            .padding(.horizontal, 24)
-                            .padding(.vertical, 10)
-                            .background(
-                                isSaved ? Color.green : Color.accentColor,
-                                in: RoundedRectangle(cornerRadius: 10)
-                            )
-                        }
-                        .buttonStyle(.plain)
-                        Spacer()
-                    }
-                    .padding(.bottom, 8)
                 }
                 .padding(28)
             }
         }
         .frame(width: 520, height: 680)
-        .onAppear { loadFromKeychain() }
+        .onAppear { loadKey() }
     }
 
     // MARK: - Helpers
 
-    private func loadFromKeychain() {
-        openAIKey = KeychainService.shared.openAIKey ?? ""
-        livekitURL = KeychainService.shared.livekitURL ?? ""
-        livekitTokenURL = KeychainService.shared.livekitTokenURL ?? ""
+    private var appVersion: String {
+        let info = Bundle.main.infoDictionary
+        let version = info?["CFBundleShortVersionString"] as? String ?? "1.0"
+        let build = info?["CFBundleVersion"] as? String ?? "1"
+        return "v\(version) (\(build))"
     }
 
-    private func save() {
-        if !openAIKey.isEmpty {
-            KeychainService.shared.save(openAIKey, for: .openAIKey)
-        } else {
-            KeychainService.shared.delete(.openAIKey)
-        }
-        if !livekitURL.isEmpty {
-            KeychainService.shared.save(livekitURL, for: .livekitURL)
-        }
-        if !livekitTokenURL.isEmpty {
-            KeychainService.shared.save(livekitTokenURL, for: .livekitToken)
-        }
-
-        withAnimation { isSaved = true }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
-            withAnimation { isSaved = false }
-        }
-    }
-
-    private func testOpenAIKey() {
-        isTestingKey = true
-        keyTestResult = nil
-
-        // Minimal API call to validate the key
-        var request = URLRequest(url: URL(string: "https://api.openai.com/v1/models")!)
-        request.setValue("Bearer \(openAIKey)", forHTTPHeaderField: "Authorization")
-
-        URLSession.shared.dataTask(with: request) { _, response, error in
-            DispatchQueue.main.async {
-                isTestingKey = false
-                if let http = response as? HTTPURLResponse {
-                    keyTestResult = http.statusCode == 200
-                        ? .success
-                        : .failure(http.statusCode == 401 ? "Invalid key" : "HTTP \(http.statusCode)")
-                } else {
-                    keyTestResult = .failure(error?.localizedDescription ?? "No response")
-                }
-            }
-        }.resume()
-    }
-
-    private func modelDescription(_ model: String) -> String {
-        switch model {
-        case "gpt-4o-mini":  return "Fast and cheap — great for daily journaling"
-        case "gpt-4o":       return "Smarter, slower — better for deep reflection"
-        case "gpt-4-turbo":  return "High quality, higher cost"
-        case "gpt-3.5-turbo": return "Fastest, lowest cost"
-        default:             return ""
-        }
+    private var isTesting: Bool {
+        if case .testing = keyStatus { return true }
+        return false
     }
 
     @ViewBuilder
-    private func settingsField(
-        label: String,
-        icon: String,
-        placeholder: String,
-        text: Binding<String>,
-        colorScheme: ColorScheme
-    ) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Label(label, systemImage: icon)
-                .font(.system(size: 13, weight: .medium))
-                .foregroundColor(.secondary)
-            TextField(placeholder, text: text)
-                .textFieldStyle(.plain)
-                .font(.system(size: 13, design: .monospaced))
-                .padding(.horizontal, 10)
-                .padding(.vertical, 8)
-                .background(
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(colorScheme == .dark ? Color(white: 0.18) : Color.white)
-                        .shadow(color: .black.opacity(0.06), radius: 2, y: 1)
-                )
+    private var keyStatusLabel: some View {
+        switch keyStatus {
+        case .none:
+            EmptyView()
+        case .saved:
+            Label("Removed", systemImage: "trash").font(.system(size: 12)).foregroundColor(.secondary)
+        case .testing:
+            HStack(spacing: 4) { ProgressView().controlSize(.mini); Text("Testing…") }
+                .font(.system(size: 12))
+        case .valid:
+            Label("Saved · key works", systemImage: "checkmark.circle.fill")
+                .font(.system(size: 12)).foregroundColor(.green)
+        case .failure(let message):
+            Label(message, systemImage: "xmark.circle.fill")
+                .font(.system(size: 12)).foregroundColor(.red)
+                .lineLimit(2)
+        }
+    }
+
+    private func loadKey() {
+        apiKey = KeychainService.shared.apiKey(for: provider) ?? ""
+        keyStatus = nil
+    }
+
+    private func saveAndTestKey() {
+        let key = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        let provider = provider
+        KeychainService.shared.setAPIKey(key, for: provider)
+        guard !key.isEmpty else { keyStatus = .saved; return }
+        keyStatus = .testing
+        Task {
+            switch await AIClient().validateKey(provider: provider, key: key) {
+            case .success: keyStatus = .valid
+            case .failure(let error): keyStatus = .failure(error.localizedDescription)
+            }
         }
     }
 

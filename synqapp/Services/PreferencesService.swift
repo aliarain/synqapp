@@ -3,8 +3,41 @@
 
 import SwiftUI
 import Combine
+import SynqCore
 
 final class PreferencesService: ObservableObject {
+
+    /// One instance for the whole app so every view sees changes immediately.
+    static let shared = PreferencesService()
+    private init() {}
+
+    // MARK: - AI
+
+    @AppStorage("aiProvider") private var aiProviderRaw: String = AIProvider.anthropic.rawValue {
+        willSet { objectWillChange.send() }
+    }
+
+    var aiProvider: AIProvider {
+        get { AIProvider(rawValue: aiProviderRaw) ?? .anthropic }
+        set { aiProviderRaw = newValue.rawValue }
+    }
+
+    func aiModel(for provider: AIProvider) -> String {
+        let stored = UserDefaults.standard.string(forKey: "aiModel.\(provider.rawValue)") ?? ""
+        return stored.isEmpty ? provider.defaultModel : stored
+    }
+
+    func setAIModel(_ model: String, for provider: AIProvider) {
+        objectWillChange.send()
+        UserDefaults.standard.set(model.trimmingCharacters(in: .whitespaces), forKey: "aiModel.\(provider.rawValue)")
+    }
+
+    /// Everything needed to call the selected provider, or nil when no key is saved.
+    func aiRequest(system: String, turns: [ChatTurn]) -> AIRequest? {
+        let provider = aiProvider
+        guard let key = KeychainService.shared.apiKey(for: provider) else { return nil }
+        return AIRequest(provider: provider, model: aiModel(for: provider), apiKey: key, system: system, turns: turns)
+    }
 
     // MARK: - Theme
 

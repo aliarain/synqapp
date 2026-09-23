@@ -2,6 +2,7 @@
 //  SynqApp — full-text search overlay (⌘F)
 
 import SwiftUI
+import SynqCore
 
 struct SearchView: View {
 
@@ -88,7 +89,7 @@ struct SearchView: View {
             fieldFocused = true
         }
         .onChange(of: query) { q in
-            results = SearchService.shared.search(query: q, in: entries)
+            results = Search.run(query: q, in: entries)
         }
     }
 

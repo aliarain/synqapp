@@ -5,6 +5,7 @@
 import SwiftUI
 import AppKit
 import UniformTypeIdentifiers
+import SynqCore
 
 struct SidebarView: View {
 

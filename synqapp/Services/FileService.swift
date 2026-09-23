@@ -4,6 +4,7 @@
 
 import Foundation
 import AppKit
+import SynqCore
 
 // MARK: - Save error
 
@@ -53,33 +54,8 @@ final class FileService {
 
     private let fm = FileManager.default
 
-    // MARK: - Filename helpers
-
-    /// Pattern: [uuid]-[yyyy-MM-dd-HH-mm-ss].md
     func makeFilename(id: UUID = UUID(), date: Date = Date()) -> String {
-        let df = DateFormatter()
-        df.locale = Locale(identifier: "en_US_POSIX")
-        df.dateFormat = "yyyy-MM-dd-HH-mm-ss"
-        return "[\(id.uuidString)]-[\(df.string(from: date))].md"
-    }
-
-    func parseComponents(from filename: String) -> (id: UUID, date: Date)? {
-        guard filename.hasPrefix("["),
-              filename.hasSuffix("].md"),
-              let divider = filename.range(of: "]-[") else { return nil }
-
-        let uuidStr = String(filename[filename.index(after: filename.startIndex)..<divider.lowerBound])
-        guard let uuid = UUID(uuidString: uuidStr) else { return nil }
-
-        let tsStart = divider.upperBound
-        let tsEnd = filename.index(filename.endIndex, offsetBy: -4)
-        let tsStr = String(filename[tsStart..<tsEnd])
-        let df = DateFormatter()
-        df.locale = Locale(identifier: "en_US_POSIX")
-        df.dateFormat = "yyyy-MM-dd-HH-mm-ss"
-        guard let date = df.date(from: tsStr) else { return nil }
-
-        return (uuid, date)
+        EntryFilename.make(id: id, date: date)
     }
 
     // MARK: - CRUD
@@ -112,11 +88,11 @@ final class FileService {
             .filter { $0.pathExtension == "md" }
             .compactMap { url -> JournalEntry? in
                 let filename = url.lastPathComponent
-                guard let (id, date) = parseComponents(from: filename),
+                guard let (id, date) = EntryFilename.parse(filename),
                       let body = try? String(contentsOf: url, encoding: .utf8)
                 else { return nil }
 
-                let videoFilename = filename.replacingOccurrences(of: ".md", with: ".mov")
+                let videoFilename = EntryFilename.videoName(for: filename)
                 let hasVideo = videoExists(videoFilename)
 
                 return JournalEntry(
@@ -126,6 +102,7 @@ final class FileService {
                     body: body,
                     entryType: hasVideo ? .video : .text,
                     videoFilename: hasVideo ? videoFilename : nil,
+                    transcript: hasVideo ? loadTranscript(for: videoFilename) : nil,
                     isPinned: pins.contains(id.uuidString)
                 )
             }
@@ -238,15 +215,7 @@ When you're ready, hit **Reflect** to talk it through with an AI that's actually
     }
 
     func exportAsPlainText(_ entry: JournalEntry, to url: URL) throws {
-        // Strip markdown syntax for plain text
-        var text = entry.body
-        // Remove heading markers
-        text = text.replacingOccurrences(of: #"^#{1,6}\s+"#, with: "", options: .regularExpression)
-        // Remove bold/italic markers
-        text = text.replacingOccurrences(of: #"\*{1,3}([^*]+)\*{1,3}"#, with: "$1", options: .regularExpression)
-        text = text.replacingOccurrences(of: #"_{1,3}([^_]+)_{1,3}"#, with: "$1", options: .regularExpression)
-        // Remove inline code
-        text = text.replacingOccurrences(of: #"`([^`]+)`"#, with: "$1", options: .regularExpression)
+        let text = PlainText.fromMarkdown(entry.content)
         try text.write(to: url, atomically: true, encoding: .utf8)
     }
 
